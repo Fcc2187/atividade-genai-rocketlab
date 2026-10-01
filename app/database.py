@@ -86,7 +86,7 @@ def read_schema(path: Path) -> str:
 
 def execute_readonly(
     path: Path, sql: str, parametros: SQLParams, *,
-    timeout_seconds: float = 5.0, deadline: float | None = None,
+    timeout_seconds: float = 20.0, deadline: float | None = None,
 ) -> QueryEvidence:
     """Executa uma leitura; limites contam erros e não dependem das instruções do modelo."""
     if not isinstance(sql, str) or not sql.strip() or len(sql) > 10000:

@@ -61,7 +61,7 @@ As verificações acima são do setup. Os controles da ferramenta SQL também fo
 
 A autorização do SQLite permite leitura somente das dez tabelas de negócio e funções analíticas aprovadas. Escrita, DDL, anexação de outros bancos, PRAGMAs, funções não autorizadas e tabelas técnicas são bloqueados. Valores são vinculados como parâmetros; apenas uma instrução SQL é executada.
 
-Limites iniciais: cinco segundos por consulta, até 100 linhas, SQL com até 10.000 caracteres e até 50 parâmetros escalares finitos. O resultado enviado ao agente terá até 12.000 caracteres de colunas/linhas, com textos de até 2.000 caracteres por célula. Truncamento é sinalizado; SQL e parâmetros originais são preservados como evidência. Operações SQL internas também têm limites de tamanho. O prazo externo da pergunta pode reduzir o prazo SQL.
+Limites calibrados: 20 segundos por consulta, até 100 linhas, SQL com até 10.000 caracteres e até 50 parâmetros escalares finitos. A consulta de pares ator/diretor na base fornecida precisou de aproximadamente 12,5 segundos após revisão dos joins; o limite inicial de cinco segundos era insuficiente. Nenhum índice foi criado. O resultado enviado ao agente terá até 12.000 caracteres de colunas/linhas, com textos de até 2.000 caracteres por célula. Truncamento é sinalizado; SQL e parâmetros originais são preservados como evidência. Operações SQL internas também têm limites de tamanho. O prazo externo da pergunta pode reduzir o prazo SQL.
 
 Para executar os testes sintéticos, sem iniciar o modelo:
 
@@ -70,6 +70,16 @@ Para executar os testes sintéticos, sem iniciar o modelo:
 ```
 
 Os testes usam SQLite temporário. Leituras de contagem, receita, lucro médio por gênero e diretores também foram verificadas na base fornecida; o hash permaneceu inalterado e nenhum arquivo WAL/SHM foi criado.
+
+## Referências analíticas
+
+`evaluation/cases.json` contém os 14 exemplos do enunciado e oito casos complementares. Cada caso declara data fixa (30/09/2026), status esperado, convenções, tolerância e SQL revisado. O campo `regras` associa os casos às 20 convenções: moeda/valores ausentes (1–6), margem/médias/notas (7–11), datas/diretores/empates/joins (12–15), ausência/ambiguidade/cobertura/anos parciais (16–20).
+
+```powershell
+.\.venv\Scripts\python.exe -X utf8 -m evaluation.run --references-only
+```
+
+O comando executa somente SQL local e grava `runtime/reference-results.json`, ignorado pelo Git. Sem flags, o comportamento é o mesmo. Não chama o Qwen. Valores financeiros usam tolerância absoluta de 0,01; notas e margens, 0,000001; contagens e identificadores são exatos. A comparação aceita SQL diferente e considera os resultados, a ordem solicitada e o truncamento. Casos de esclarecimento avaliam a necessidade de informação adicional, sem exigir uma frase literal.
 
 ## Modelo local no Windows
 

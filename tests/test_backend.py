@@ -110,5 +110,74 @@ class DatabaseTests(unittest.TestCase):
                 self.db.execute_readonly(self.path, sql, params)
 
 
+class AnalyticalTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="cinedata-references-")
+        self.addCleanup(self.temporary.cleanup)
+        self.path = Path(self.temporary.name) / "analitico.db"
+        with closing(sqlite3.connect(self.path)) as c, c:
+            c.executescript("""
+                CREATE TABLE dim_movies (sk_movie_id TEXT PRIMARY KEY, titulo TEXT, data_lancamento TEXT, ano_lancamento INTEGER);
+                CREATE TABLE fact_movies_performance (sk_movie_id TEXT PRIMARY KEY, receita_usd REAL, orcamento_usd REAL, lucro_usd REAL, receita_brl REAL, orcamento_brl REAL, lucro_brl REAL, nota_imdb REAL, nota_tmdb REAL, popularidade REAL);
+                CREATE TABLE dim_genres (sk_genre_id TEXT PRIMARY KEY, nome_genero TEXT);
+                CREATE TABLE bridge_movie_genre (sk_movie_id TEXT, sk_genre_id TEXT, PRIMARY KEY(sk_movie_id,sk_genre_id));
+                CREATE TABLE dim_people (sk_person_id TEXT PRIMARY KEY, nome_pessoa TEXT, tipo_pessoa TEXT);
+                CREATE TABLE bridge_movie_person (sk_movie_id TEXT, sk_person_id TEXT, PRIMARY KEY(sk_movie_id,sk_person_id));
+                INSERT INTO dim_movies VALUES ('a','A','2021-09-30',2021), ('b','B','2026-09-30',2026), ('c','C','2026-10-01',2026), ('d','D','2021-09-29',2021), ('e','E','2026-09-29',2026);
+                INSERT INTO fact_movies_performance VALUES
+                    ('a',100,40,60,500,200,300,8,7,10),
+                    ('b',NULL,20,-20,NULL,100,-100,8,7,100),
+                    ('c',100,NULL,100,500,NULL,500,8,7,1),
+                    ('d',0,10,-10,0,50,-50,8,7,1),
+                    ('e',200,100,100,1000,500,500,8,7,2);
+                INSERT INTO dim_genres VALUES ('g1','Action'), ('g2','Adventure');
+                INSERT INTO bridge_movie_genre VALUES ('a','g1'), ('b','g1'), ('c','g1'), ('d','g1'), ('e','g1'), ('a','g2');
+                INSERT INTO dim_people VALUES ('p1','Diretor Cinco','Diretor'), ('p2','Diretor Quatro','Diretor'), ('p3','Ator A','Ator');
+                INSERT INTO bridge_movie_person VALUES ('a','p1'), ('b','p1'), ('c','p1'), ('d','p1'), ('e','p1'), ('a','p2'), ('b','p2'), ('c','p2'), ('d','p2'), ('a','p3'), ('b','p3'), ('c','p3'), ('d','p3'), ('e','p3');
+            """)
+        try:
+            self.evaluation = importlib.import_module("evaluation.run")
+        except ModuleNotFoundError as error:
+            self.fail(f"Avaliação ainda ausente: {error.name}")
+
+    def reference(self, case_id):
+        from app.database import execute_readonly
+        case = next(case for case in self.evaluation.load_cases() if case["id"] == case_id)
+        reference = case["referencias"][0]
+        return execute_readonly(self.path, reference["sql"], reference["parametros"])
+
+    def test_join_nao_duplica_receita(self):
+        result = self.reference("10_filmes_genero")
+        self.assertEqual(result.linhas, [["g1", "Action", 5], ["g2", "Adventure", 1]])
+        finance = self.reference("02_lucro_genero")
+        self.assertEqual(finance.linhas, [["g1", "Action", 62.5, 4], ["g2", "Adventure", 60.0, 1]])
+
+    def test_lucro_e_margem_com_nulos(self):
+        self.assertEqual(self.reference("03_maior_margem").linhas, [["a", "A", 60.0]])
+        self.assertEqual(self.reference("12_margem_genero").linhas, [["g2", "Adventure", 60.0, 1], ["g1", "Action", 55.0, 2]])
+
+    def test_diretor_minimo_cinco_filmes(self):
+        self.assertEqual(self.reference("08_diretor_nota").linhas, [["p1", "Diretor Cinco", 8.0, 5]])
+
+    def test_datas_ano_e_janela_movel(self):
+        self.assertEqual(self.reference("07_ator_cinco_anos").linhas, [["p3", "Ator A", 3]])
+        self.assertEqual(self.reference("20_anos_parciais").linhas, [[2026, 2]])
+        self.assertEqual(self.reference("21_futuros").linhas, [[1]])
+
+    def test_comparador_ignora_sql_e_respeita_ordem(self):
+        from app.database import QueryEvidence
+        expected = QueryEvidence("sql de referência", {}, ["id", "valor"], [["a", 1.0], ["b", 2.0]], False)
+        actual = QueryEvidence("sql diferente", {}, ["valor", "id"], [[2.00001, "b"], [1.00001, "a"]], False)
+        compare = self.evaluation.compare_rows
+        self.assertTrue(compare(actual, expected, ordered=False, abs_tol=0.01, rel_tol=1e-9))
+        self.assertFalse(compare(actual, expected, ordered=True, abs_tol=0.01, rel_tol=1e-9))
+        incorrect = QueryEvidence("outro sql", {}, ["id", "valor"], [["a", 3.0], ["b", 2.0]], False)
+        self.assertFalse(compare(incorrect, expected, ordered=True, abs_tol=0.01, rel_tol=1e-9))
+        missing = QueryEvidence("outro sql", {}, ["id", "valor"], [["a", 1.0]], False)
+        self.assertFalse(compare(missing, expected, ordered=False, abs_tol=0.01, rel_tol=1e-9))
+        truncated = QueryEvidence("outro sql", {}, expected.colunas, expected.linhas, True)
+        self.assertFalse(compare(truncated, expected, ordered=True, abs_tol=0.01, rel_tol=1e-9))
+
+
 if __name__ == "__main__":
     unittest.main()
