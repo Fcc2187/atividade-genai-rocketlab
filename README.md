@@ -1,6 +1,6 @@
 # CineData Analytics
 
-Ferramenta SQL, gabaritos analíticos e agente local implementados e testados. Rotas FastAPI e avaliação das perguntas com o modelo real seguem para as próximas etapas.
+Backend local com SQL protegido, agente Qwen e rotas FastAPI implementados. Os 22 testes simulados passam; a avaliação analítica com o modelo real ainda está pendente.
 
 ## Ambiente Python
 
@@ -125,6 +125,25 @@ node .\test-model.mjs
 O script verifica o alias, uma saudação e um ciclo sintético de ferramenta com soma 7 + 5 = 12. Os resultados e tempos são gravados em `runtime/smoke-result.json`. Ele não acessa o SQLite. O Node é usado apenas nesta prova; o backend planejado será Python.
 
 Inferência verificada não substitui avaliação analítica: integração Pydantic AI, regras analíticas e exemplos do enunciado serão implementados e testados nas próximas etapas.
+
+## API local
+
+Com o modelo iniciado, abrir outro terminal na raiz do projeto:
+
+```powershell
+.\.venv\Scripts\python.exe -X utf8 -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+Documentação interativa: `http://127.0.0.1:8000/docs`. `GET /health` verifica somente o banco, sem inferência. Exemplo:
+
+```powershell
+$body = @{ pergunta = 'Quantos filmes existem por gênero?' } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8000/perguntas' -ContentType 'application/json; charset=utf-8' -Body ([System.Text.Encoding]::UTF8.GetBytes($body))
+```
+
+`POST /perguntas` devolve `status`, `resposta`, `consultas` (SQL, parâmetros, colunas, linhas e truncamento), `avisos`, `modelo` e `uso`. Perguntas são independentes, com até 2.000 caracteres após remover espaços externos. Data de referência é a data local do computador. Configuração inválida não troca provedor automaticamente.
+
+Erros: 422 para entrada inválida; 503 para banco/modelo/configuração indisponível; 502 para resposta inválida ou limite/contexto excedido; 504 para prazo excedido. O corpo `detail` traz `codigo` e `mensagem`, sem detalhes internos. Encerrar a API com `Ctrl+C`; o cliente do modelo é fechado no ciclo de vida da aplicação.
 
 ## Banco e desenvolvimento posterior
 
