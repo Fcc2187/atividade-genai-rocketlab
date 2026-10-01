@@ -1,6 +1,6 @@
 # CineData Analytics
 
-Setup concluído e ferramenta SQL somente leitura implementada e testada. Agente e rotas FastAPI serão implementados nas próximas etapas.
+Ferramenta SQL, gabaritos analíticos e agente local implementados e testados. Rotas FastAPI e avaliação das perguntas com o modelo real seguem para as próximas etapas.
 
 ## Ambiente Python
 
@@ -53,7 +53,7 @@ Configuração atual: banco `cinerocket (1).db`, provedor `llamafile`, alias `qw
 - Banco aberto com URI `mode=ro&immutable=1`, após verificar ausência de WAL; 11 tabelas encontradas. SHA-256 preservado: `410f5beef6ab9fb34b9044d5dd191f56f3f0dc30a56e6432386ecef0d977b012`.
 - `.env`, `.venv`, pesos, runtime, banco e materiais locais estão ignorados no Git. O README e o guia de instalação acompanham o setup versionado.
 
-As verificações acima são do setup. Os controles da ferramenta SQL também foram implementados e testados; agente, gabaritos analíticos e contratos HTTP seguem para as próximas etapas.
+As verificações acima são do setup. A suíte atual também cobre SQL protegido, gabaritos e agente simulado; o contrato HTTP e a qualidade analítica do modelo ainda precisam ser verificados.
 
 ## Ferramenta SQL protegida
 
@@ -80,6 +80,14 @@ Os testes usam SQLite temporário. Leituras de contagem, receita, lucro médio p
 ```
 
 O comando executa somente SQL local e grava `runtime/reference-results.json`, ignorado pelo Git. Sem flags, o comportamento é o mesmo. Não chama o Qwen. Valores financeiros usam tolerância absoluta de 0,01; notas e margens, 0,000001; contagens e identificadores são exatos. A comparação aceita SQL diferente e considera os resultados, a ordem solicitada e o truncamento. Casos de esclarecimento avaliam a necessidade de informação adicional, sem exigir uma frase literal.
+
+## Agente local
+
+`app/agent.py` usa Pydantic AI com uma ferramenta de dados (`consultar_sql`) e saída tipada (`status`, `resposta`, `avisos`). SQL, parâmetros, linhas e uso são registrados pelo backend. Cada pergunta tem estado próprio, sem histórico ou memória.
+
+Até três chamadas de modelo e duas tentativas SQL, incluindo argumentos inválidos e erros. Um erro SQL corrigível permite uma correção; bloqueio de segurança encerra com recusa. SQL roda fora do event loop; ao cancelar a pergunta, o worker recebe um sinal de interrupção e é aguardado. Resultados analíticos exigem uma consulta válida. Transporte sem retries, proxies do ambiente ou redirects; URL obrigatoriamente de loopback. Não usa OpenAI Plus nem API de nuvem.
+
+Prova real de compatibilidade: ferramenta sintética `somar(7, 5)` e saída `AgentAnswer` aprovadas no Qwen. A repetição com cache levou 39,45 s, duas chamadas, 1.003 tokens de entrada (963 em cache) e 97 de saída. Isso não mede perguntas sobre o catálogo. Prompt real com esquema e 20 regras: 2.570 tokens antes de resultados, com geração máxima de 1.024 e contexto de 8.192. Prazo total inicial de 180 s ainda depende da avaliação analítica em CPU.
 
 ## Modelo local no Windows
 

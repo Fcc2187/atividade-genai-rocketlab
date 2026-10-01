@@ -7,6 +7,7 @@ import math
 from pathlib import Path
 import sqlite3
 import time
+from threading import Event
 
 SQLValue = str | int | float | None
 SQLParams = dict[str, SQLValue]
@@ -86,7 +87,7 @@ def read_schema(path: Path) -> str:
 
 def execute_readonly(
     path: Path, sql: str, parametros: SQLParams, *,
-    timeout_seconds: float = 20.0, deadline: float | None = None,
+    timeout_seconds: float = 20.0, deadline: float | None = None, cancel: Event | None = None,
 ) -> QueryEvidence:
     """Executa uma leitura; limites contam erros e não dependem das instruções do modelo."""
     if not isinstance(sql, str) or not sql.strip() or len(sql) > 10000:
@@ -107,7 +108,10 @@ def execute_readonly(
     if deadline is not None and not math.isfinite(deadline):
         raise QueryInvalid("Prazo da pergunta inválido.")
     expires = min(time.monotonic() + timeout_seconds, deadline if deadline is not None else math.inf)
-    if time.monotonic() >= expires:
+    def interrupted():
+        return time.monotonic() >= expires or cancel is not None and cancel.is_set()
+
+    if interrupted():
         raise QueryTimedOut("Prazo da consulta esgotado.")
     parameters = dict(parametros)
     denied = False
@@ -133,12 +137,12 @@ def execute_readonly(
             return sqlite3.SQLITE_OK if allowed else sqlite3.SQLITE_DENY
 
         connection.set_authorizer(authorize)
-        connection.set_progress_handler(lambda: int(time.monotonic() >= expires), 1000)
+        connection.set_progress_handler(lambda: int(interrupted()), 1000)
         connection.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, 1_000_000)
         connection.setlimit(sqlite3.SQLITE_LIMIT_SQL_LENGTH, 10000)
         connection.setlimit(sqlite3.SQLITE_LIMIT_COLUMN, 64)
         try:
-            if time.monotonic() >= expires:
+            if interrupted():
                 raise QueryTimedOut("Prazo da consulta esgotado.")
             cursor = connection.execute(sql, parameters)
             if cursor.description is None:
@@ -147,7 +151,7 @@ def execute_readonly(
             rows: list[list[SQLValue]] = []
             truncated = False
             for index, row in enumerate(cursor):
-                if time.monotonic() >= expires:
+                if interrupted():
                     raise QueryTimedOut("Prazo da consulta esgotado.")
                 if index == 100:
                     truncated = True
