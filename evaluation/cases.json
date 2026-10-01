@@ -20,6 +20,10 @@
         "sql": "SELECT m.sk_movie_id, m.titulo, 1.0*f.receita_brl AS receita_brl FROM dim_movies m JOIN fact_movies_performance f USING(sk_movie_id) WHERE f.receita_brl IS NOT NULL ORDER BY f.receita_brl DESC, m.titulo, m.sk_movie_id LIMIT 10",
         "parametros": {}
       }
+    ],
+    "colunas_relevantes": [
+      "titulo",
+      "receita_brl"
     ]
   },
   {
@@ -45,10 +49,16 @@
         "sql": "SELECT g.sk_genre_id, g.nome_genero, AVG(f.lucro_usd) AS lucro_medio_usd, COUNT(DISTINCT m.sk_movie_id) AS filmes_validos FROM dim_genres g JOIN bridge_movie_genre b USING(sk_genre_id) JOIN dim_movies m USING(sk_movie_id) JOIN fact_movies_performance f USING(sk_movie_id) WHERE f.receita_usd IS NOT NULL GROUP BY g.sk_genre_id, g.nome_genero ORDER BY lucro_medio_usd DESC, g.nome_genero, g.sk_genre_id",
         "parametros": {}
       }
+    ],
+    "colunas_relevantes": [
+      "nome_genero",
+      "lucro_medio_usd",
+      "filmes_validos"
     ]
   },
   {
     "id": "03_maior_margem",
+    "aliases": {"margem": "margem_percentual"},
     "categoria": "financeiro",
     "pergunta": "Qual filme teve a maior margem de lucro?",
     "data_referencia": "2026-09-30",
@@ -69,6 +79,10 @@
         "sql": "SELECT m.sk_movie_id, m.titulo, 100.0*(f.receita_usd-f.orcamento_usd)/f.receita_usd AS margem_percentual FROM dim_movies m JOIN fact_movies_performance f USING(sk_movie_id) WHERE f.receita_usd>0 AND f.orcamento_usd IS NOT NULL ORDER BY margem_percentual DESC, m.titulo, m.sk_movie_id LIMIT 1",
         "parametros": {}
       }
+    ],
+    "colunas_relevantes": [
+      "titulo",
+      "margem_percentual"
     ]
   },
   {
@@ -90,6 +104,10 @@
         "sql": "SELECT m.sk_movie_id, m.titulo, 1.0*f.popularidade AS popularidade FROM dim_movies m JOIN fact_movies_performance f USING(sk_movie_id) WHERE f.popularidade IS NOT NULL ORDER BY f.popularidade DESC, m.titulo, m.sk_movie_id LIMIT 5",
         "parametros": {}
       }
+    ],
+    "colunas_relevantes": [
+      "titulo",
+      "popularidade"
     ]
   },
   {
@@ -112,6 +130,10 @@
         "sql": "SELECT m.sk_movie_id, m.titulo, f.nota_tmdb, f.nota_imdb, ABS(f.nota_tmdb-f.nota_imdb) AS divergencia FROM dim_movies m JOIN fact_movies_performance f USING(sk_movie_id) WHERE f.nota_tmdb IS NOT NULL AND f.nota_imdb IS NOT NULL ORDER BY divergencia DESC, m.titulo, m.sk_movie_id LIMIT 10",
         "parametros": {}
       }
+    ],
+    "colunas_relevantes": [
+      "titulo",
+      "divergencia"
     ]
   },
   {
@@ -137,6 +159,11 @@
           "referencia": "2026-09-30"
         }
       }
+    ],
+    "colunas_relevantes": [
+      "ano_lancamento",
+      "nota_media_imdb",
+      "filmes_validos"
     ]
   },
   {
@@ -162,10 +189,15 @@
           "referencia": "2026-09-30"
         }
       }
+    ],
+    "colunas_relevantes": [
+      "nome_pessoa",
+      "filmes"
     ]
   },
   {
     "id": "08_diretor_nota",
+    "aliases": {"diretor": "nome_pessoa", "media_imdb": "nota_media_imdb", "qtd_filmes": "filmes_validos"},
     "categoria": "pessoas",
     "pergunta": "Qual diretor tem a maior média de notas de seus filmes, considerando pelo menos 5 filmes?",
     "data_referencia": "2026-09-30",
@@ -187,6 +219,11 @@
         "sql": "SELECT p.sk_person_id, p.nome_pessoa, AVG(f.nota_imdb) AS nota_media_imdb, COUNT(DISTINCT b.sk_movie_id) AS filmes_validos FROM dim_people p JOIN bridge_movie_person b USING(sk_person_id) JOIN fact_movies_performance f USING(sk_movie_id) WHERE p.tipo_pessoa='Diretor' AND f.nota_imdb IS NOT NULL GROUP BY p.sk_person_id, p.nome_pessoa HAVING COUNT(DISTINCT b.sk_movie_id)>=5 ORDER BY nota_media_imdb DESC, p.nome_pessoa, p.sk_person_id LIMIT 1",
         "parametros": {}
       }
+    ],
+    "colunas_relevantes": [
+      "nome_pessoa",
+      "nota_media_imdb",
+      "filmes_validos"
     ]
   },
   {
@@ -208,6 +245,11 @@
         "sql": "WITH direcoes AS MATERIALIZED (SELECT b.sk_movie_id,b.sk_person_id FROM dim_people p JOIN bridge_movie_person b USING(sk_person_id) WHERE p.tipo_pessoa='Diretor'), pares AS (SELECT b.sk_person_id AS ator_id,d.sk_person_id AS diretor_id,COUNT(*) AS filmes FROM direcoes d CROSS JOIN bridge_movie_person b ON b.sk_movie_id=d.sk_movie_id GROUP BY b.sk_person_id,d.sk_person_id) SELECT p.ator_id,a.nome_pessoa AS ator,p.diretor_id,d.nome_pessoa AS diretor,p.filmes FROM pares p JOIN dim_people a ON a.sk_person_id=p.ator_id JOIN dim_people d ON d.sk_person_id=p.diretor_id WHERE a.tipo_pessoa='Ator' ORDER BY p.filmes DESC,a.nome_pessoa,d.nome_pessoa,p.ator_id,p.diretor_id LIMIT 1",
         "parametros": {}
       }
+    ],
+    "colunas_relevantes": [
+      "ator",
+      "diretor",
+      "filmes"
     ]
   },
   {
@@ -228,6 +270,10 @@
         "sql": "SELECT g.sk_genre_id, g.nome_genero, COUNT(DISTINCT b.sk_movie_id) AS filmes FROM dim_genres g LEFT JOIN bridge_movie_genre b USING(sk_genre_id) GROUP BY g.sk_genre_id, g.nome_genero ORDER BY filmes DESC, g.nome_genero, g.sk_genre_id",
         "parametros": {}
       }
+    ],
+    "colunas_relevantes": [
+      "nome_genero",
+      "filmes"
     ]
   },
   {
@@ -253,6 +299,10 @@
         "sql": "SELECT c.sk_company_id, c.nome_produtora, 1.0*SUM(f.lucro_usd) AS lucro_acumulado_usd, COUNT(DISTINCT b.sk_movie_id) AS filmes_validos FROM dim_companies c JOIN bridge_movie_company b USING(sk_company_id) JOIN fact_movies_performance f USING(sk_movie_id) WHERE f.receita_usd IS NOT NULL AND f.orcamento_usd IS NOT NULL GROUP BY c.sk_company_id, c.nome_produtora ORDER BY lucro_acumulado_usd DESC, c.nome_produtora, c.sk_company_id LIMIT 1",
         "parametros": {}
       }
+    ],
+    "colunas_relevantes": [
+      "nome_produtora",
+      "lucro_acumulado_usd"
     ]
   },
   {
@@ -277,6 +327,11 @@
         "sql": "SELECT g.sk_genre_id, g.nome_genero, AVG(100.0*(f.receita_usd-f.orcamento_usd)/f.receita_usd) AS margem_media_percentual, COUNT(DISTINCT b.sk_movie_id) AS filmes_validos FROM dim_genres g JOIN bridge_movie_genre b USING(sk_genre_id) JOIN fact_movies_performance f USING(sk_movie_id) WHERE f.receita_usd>0 AND f.orcamento_usd IS NOT NULL GROUP BY g.sk_genre_id, g.nome_genero ORDER BY margem_media_percentual DESC, g.nome_genero, g.sk_genre_id",
         "parametros": {}
       }
+    ],
+    "colunas_relevantes": [
+      "nome_genero",
+      "margem_media_percentual",
+      "filmes_validos"
     ]
   },
   {
@@ -298,6 +353,10 @@
         "sql": "SELECT m.sk_movie_id, m.titulo, r.qtd_avaliacoes_usuarios FROM dim_movies m JOIN dim_reviews r USING(sk_movie_id) WHERE r.qtd_avaliacoes_usuarios IS NOT NULL ORDER BY r.qtd_avaliacoes_usuarios DESC, m.titulo, m.sk_movie_id LIMIT 1",
         "parametros": {}
       }
+    ],
+    "colunas_relevantes": [
+      "titulo",
+      "qtd_avaliacoes_usuarios"
     ]
   },
   {
@@ -321,6 +380,10 @@
         "sql": "SELECT m.sk_movie_id, m.titulo, r.nota_media_usuarios, f.nota_imdb, ABS(r.nota_media_usuarios-f.nota_imdb) AS divergencia FROM dim_movies m JOIN dim_reviews r USING(sk_movie_id) JOIN fact_movies_performance f USING(sk_movie_id) WHERE r.nota_media_usuarios IS NOT NULL AND f.nota_imdb IS NOT NULL ORDER BY divergencia DESC, m.titulo, m.sk_movie_id LIMIT 10",
         "parametros": {}
       }
+    ],
+    "colunas_relevantes": [
+      "titulo",
+      "divergencia"
     ]
   },
   {
@@ -414,6 +477,12 @@
         "sql": "SELECT g.sk_genre_id, g.nome_genero, AVG(f.nota_imdb) AS nota_media_imdb, COUNT(DISTINCT CASE WHEN f.nota_imdb IS NOT NULL THEN b.sk_movie_id END) AS filmes_validos, COUNT(DISTINCT b.sk_movie_id) AS filmes_totais FROM dim_genres g LEFT JOIN bridge_movie_genre b USING(sk_genre_id) LEFT JOIN fact_movies_performance f USING(sk_movie_id) GROUP BY g.sk_genre_id, g.nome_genero ORDER BY g.nome_genero, g.sk_genre_id",
         "parametros": {}
       }
+    ],
+    "colunas_relevantes": [
+      "nome_genero",
+      "nota_media_imdb",
+      "filmes_validos",
+      "filmes_totais"
     ]
   },
   {

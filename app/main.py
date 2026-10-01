@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.agent import AgentAnswer, InvalidAgentResult, ProviderUnavailable, QuestionTimedOut, create_local_model, responder
+from app.agent import AgentAnswer, InvalidAgentResult, ProviderRateLimited, ProviderUnavailable, QuestionTimedOut, create_groq_model, responder
 from app.database import DatabaseUnavailable, QueryEvidence, read_schema
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,15 +40,16 @@ async def lifespan(app: FastAPI):
     app.state.configuration_error = False
     client = None
     try:
-        if os.getenv("MODEL_PROVIDER", "llamafile") != "llamafile":
+        if os.getenv("MODEL_PROVIDER", "groq") != "groq":
             raise ValueError("Provedor não suportado.")
-        timeout = float(os.getenv("QUESTION_TIMEOUT_SECONDS", "180"))
+        timeout = float(os.getenv("QUESTION_TIMEOUT_SECONDS", "600"))
         if not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("Prazo inválido.")
-        name = os.getenv("MODEL_NAME", "qwen3.5-9b").strip()
+        name = os.getenv("MODEL_NAME", "openai/gpt-oss-120b").strip()
         if not name:
             raise ValueError("Nome do modelo ausente.")
-        app.state.model, client = create_local_model(os.getenv("MODEL_BASE_URL", "http://127.0.0.1:8081/v1"), name)
+        app.state.model, client = create_groq_model(os.getenv("MODEL_BASE_URL", "https://api.groq.com/openai/v1"),
+                                                  name, os.getenv("GROQ_API_KEY", ""))
         app.state.timeout = timeout
     except ValueError:
         app.state.configuration_error = True
@@ -75,14 +76,16 @@ def health():
 @app.post("/perguntas", response_model=QuestionResponse)
 async def question(body: QuestionInput):
     if app.state.configuration_error:
-        raise failure(503, "configuracao_invalida", "Confira a configuração local do modelo e do prazo.")
+        raise failure(503, "configuracao_invalida", "Configure GROQ_API_KEY, o modelo, o endpoint Groq e o prazo.")
     try:
         result = await responder(body.pergunta, app.state.database_path, date.today(), app.state.model,
                                  timeout_seconds=app.state.timeout)
     except DatabaseUnavailable as error:
         raise failure(503, "banco_indisponivel", "Banco indisponível.") from error
     except ProviderUnavailable as error:
-        raise failure(503, "modelo_indisponivel", "Inicie o servidor do modelo local.") from error
+        raise failure(503, "modelo_indisponivel", "Groq indisponível; confira conexão e chave de API.") from error
+    except ProviderRateLimited as error:
+        raise failure(503, "cota_excedida", "Limite do Groq atingido; aguarde antes de tentar novamente.") from error
     except InvalidAgentResult as error:
         raise failure(502, "resposta_invalida", "Resposta inválida do modelo ou limite operacional excedido.") from error
     except QuestionTimedOut as error:

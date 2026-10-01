@@ -3,14 +3,12 @@
 import asyncio
 from dataclasses import dataclass, field
 from datetime import date
-import ipaddress
 import math
 from pathlib import Path
 import re
 from threading import Event
 import time
 from typing import Annotated, Literal
-from urllib.parse import urlsplit
 
 import httpx
 from openai import AsyncOpenAI, APIConnectionError, APITimeoutError
@@ -28,6 +26,10 @@ from app.database import QueryEvidence, QueryInvalid, QueryRejected, QueryTimedO
 
 
 class ProviderUnavailable(Exception):
+    pass
+
+
+class ProviderRateLimited(Exception):
     pass
 
 
@@ -64,6 +66,8 @@ class _State:
 
 
 RULES = """Você é um analista do catálogo CineData. Responda em português com a ferramenta de saída responder.
+Emita somente chamadas de ferramenta, sem texto fora delas. A resposta ao usuário aparece só em responder;
+não a escreva também como texto livre antes da chamada.
 Para fatos ou números do catálogo, execute consultar_sql antes de responder; nunca invente dados.
 Use SQLite SELECT/CTE, uma instrução, parâmetros nomeados para valores e aliases claros.
 O banco é somente leitura. Recuse escrita, shell, anexação, metadados técnicos e pedidos fora do catálogo.
@@ -84,10 +88,16 @@ Regras analíticas:
 10 Divergência de notas = ABS(nota1-nota2), ambas não nulas, escala 0–10.
 11 Avaliações de usuários: agregado dim_reviews; movie_reviews guarda avaliações individuais.
 12 Últimos cinco anos: data_lancamento BETWEEN date(:referencia,'-5 years') AND :referencia, inclusive; excluir futuros.
+  data_lancamento é DATE (texto ISO YYYY-MM-DD); ano_lancamento é INTEGER (ex.: 2026).
+  Jamais compare ano_lancamento a datas ISO: isso retorna vazio incorretamente no SQLite.
+  Para período com dia/mês use data_lancamento; para ano civil use ano_lancamento com números.
 13 Melhor diretor por média: IMDb padrão, pelo menos cinco filmes com nota válida; informe amostra.
 14 Empates: métrica DESC, título/nome ASC, chave ASC. Singular retorna 1; ranking sem tamanho retorna top 10 e avise.
 15 Pontes muitos-para-muitos: contar filmes distintos por chave; evitar multiplicar valores em joins.
   Cada filme pode contribuir para vários gêneros/produtoras; não repartir valores sem pedido.
+  Pares ator/diretor têm papéis diferentes: nunca filtre pela ordem das chaves (ator_id < diretor_id).
+  Para pares, materialize primeiro os vínculos de diretores; CROSS JOIN a ponte pela chave do filme,
+  agrupe as chaves de pessoas antes de buscar nomes e filtre o papel Ator no resultado agregado.
 16 Sem registros elegíveis: status sem_dados e explique; COUNT=0 também significa ausência. Nunca invente.
 17 Popularidade = popularidade, não número de avaliações. 'Melhores' sem fonte pede esclarecimento.
 18 Título/nome não identifica sozinho: use chave; se ambíguo, peça ano/nome completo/papel/identificador.
@@ -97,29 +107,27 @@ Ferramenta retorna até 100 linhas e pode truncar; avise se isso ocorrer, sem to
 Papéis exatos em dim_people: Ator, Diretor, Roteirista.
 Gêneros incluem Action, Adventure, Animation, Comedy, Crime, Documentary, Drama, Family, Fantasy,
 History, Horror, Music, Mystery, Romance, Science Fiction, TV Movie, Thriller, War, Western.
-Para joins de elenco, prefira filtrar filmes/papéis antes de agrupar; a ponte tem chave (filme,pessoa).
+Para contagens de elenco, comece nos filmes elegíveis, depois CROSS JOIN bridge_movie_person
+e CROSS JOIN dim_people, com ON pelas chaves e filtro de papel. A ponte tem chave (filme,pessoa).
+SQLite reordena JOIN comum mesmo após filtrar numa CTE; iniciar por pessoas pode exceder o prazo.
 """
 
 
-def create_local_model(base_url: str, name: str) -> tuple[OpenAIChatModel, AsyncOpenAI]:
-    parsed = urlsplit(base_url)
-    host = parsed.hostname or ""
-    try:
-        local = ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        local = host == "localhost"
-    if parsed.scheme not in ("http", "https") or not local or parsed.username or parsed.password or parsed.query or parsed.fragment:
-        raise ValueError("O provedor llamafile exige URL de loopback sem credenciais.")
-    # Sem proxy do ambiente nem redirects: o caminho local não pode sair para serviços externos.
+def create_groq_model(base_url: str, name: str, api_key: str) -> tuple[OpenAIChatModel, AsyncOpenAI]:
+    if base_url.rstrip("/") != "https://api.groq.com/openai/v1":
+        raise ValueError("Use somente o endpoint HTTPS oficial do Groq.")
+    if not api_key.strip() or not name.strip():
+        raise ValueError("Configure GROQ_API_KEY e MODEL_NAME.")
+    # Sem proxy do ambiente nem redirects para outros destinos com a credencial.
     transport = httpx.AsyncClient(trust_env=False, follow_redirects=False)
-    client = AsyncOpenAI(base_url=base_url, api_key="local-not-required", max_retries=0, http_client=transport)
+    client = AsyncOpenAI(base_url=base_url, api_key=api_key.strip(), max_retries=0, http_client=transport)
     model = OpenAIChatModel(name, provider=OpenAIProvider(openai_client=client),
-                            profile={"supports_forced_tool_choice": False, "openai_supports_strict_tool_definition": False})
+                            profile={"supports_forced_tool_choice": True, "openai_supports_strict_tool_definition": False})
     return model, client
 
 
 async def responder(pergunta: str, database_path: Path, referencia: date, model: Model, *,
-                    timeout_seconds: float = 180.0) -> QuestionResult:
+                    timeout_seconds: float = 600.0) -> QuestionResult:
     if not isinstance(pergunta, str) or not pergunta.strip() or len(pergunta) > 2000:
         raise ValueError("Pergunta inválida.")
     if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
@@ -139,11 +147,17 @@ async def responder(pergunta: str, database_path: Path, referencia: date, model:
     try:
         async with asyncio.timeout(timeout_seconds):
             schema = await asyncio.to_thread(read_schema, state.path)
-            prompt = RULES + f"\nData de referência: {referencia.isoformat()}.\nEsquema real:\n{schema}"
+            prompt = (f"Esquema real:\n{schema}\nData de referência: {referencia.isoformat()}.\n" + RULES
+                      + "\nSe a pergunta pedir últimos N anos, use data_lancamento, com limite inferior "
+                      "date(:referencia, '-' || :anos || ' years') e superior :referencia. "
+                      "ano_lancamento serve apenas para anos civis explícitos. "
+                      "Em análises por ano, exclua futuros com data_lancamento <= :referencia, salvo pedido explícito. "
+                      "Se a pergunta pedir o maior/melhor filme, diretor ou par no singular, use LIMIT 1; não acrescente top 10. "
+                      "Confira período e quantidade solicitados antes de executar.")
             agent = Agent(model, output_type=ToolOutput(AgentAnswer, name="responder", max_retries=0, strict=False),
                           instructions=prompt, deps_type=_State, retries=0, capabilities=[hooks],
-                          model_settings={"max_tokens":1024, "temperature":0, "parallel_tool_calls":False,
-                                          "tool_choice":"auto", "extra_body":{"chat_template_kwargs":{"enable_thinking":False}}})
+                          model_settings={"max_tokens":2048, "temperature":0, "parallel_tool_calls":False,
+                                          "tool_choice":"auto", "openai_reasoning_effort":"medium"})
 
             @agent.tool(retries=1, sequential=True)
             async def consultar_sql(ctx: RunContext[_State], sql: StrictStr,
@@ -189,10 +203,12 @@ async def responder(pergunta: str, database_path: Path, referencia: date, model:
     except (TimeoutError, QueryTimedOut, APITimeoutError) as error:
         raise QuestionTimedOut("Prazo da pergunta esgotado.") from error
     except (APIConnectionError, httpx.ConnectError) as error:
-        raise ProviderUnavailable("Servidor do modelo local indisponível.") from error
+        raise ProviderUnavailable("Groq indisponível.") from error
     except ModelHTTPError as error:
-        if error.status_code >= 500:
-            raise ProviderUnavailable("Servidor do modelo local indisponível.") from error
+        if error.status_code == 429:
+            raise ProviderRateLimited("Limite do Groq atingido; aguarde antes de tentar novamente.") from error
+        if error.status_code >= 500 or error.status_code in (401,403):
+            raise ProviderUnavailable("Groq indisponível; confira conexão e credencial.") from error
         raise InvalidAgentResult("Modelo recusou a solicitação ou excedeu o contexto.") from error
     except (UnexpectedModelBehavior, UsageLimitExceeded) as error:
         raise InvalidAgentResult("Resposta inválida ou limite de chamadas atingido.") from error

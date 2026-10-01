@@ -183,6 +183,37 @@ class AnalyticalTests(unittest.TestCase):
         truncated = QueryEvidence("outro sql", {}, expected.colunas, expected.linhas, True)
         self.assertFalse(compare(truncated, expected, ordered=True, abs_tol=0.01, rel_tol=1e-9))
 
+    def test_comparador_colunas_relevantes_e_extras(self):
+        from app.database import QueryEvidence
+        expected=QueryEvidence("ref",{},["titulo","receita_brl"],[["Filme",100.0]],False)
+        actual=QueryEvidence("outro SQL",{},["titulo","receita_brl","ano_lancamento"],[["Filme",100,2026]],False)
+        self.assertTrue(self.evaluation.compare_rows(actual,expected,ordered=True))
+        wrong=QueryEvidence("outro SQL",{},actual.colunas,[["Filme",200,2026]],False)
+        self.assertFalse(self.evaluation.compare_rows(wrong,expected,ordered=True))
+        missing=QueryEvidence("outro SQL",{},["titulo"],[["Filme"]],False)
+        self.assertFalse(self.evaluation.compare_rows(missing,expected,ordered=True))
+
+    def test_alias_de_metrica_com_colunas_extras(self):
+        from dataclasses import asdict
+        from app.database import QueryEvidence
+        case = next(c for c in self.evaluation.load_cases() if c['id'] == '03_maior_margem')
+        reference = self.reference(case['id'])
+        query = QueryEvidence('SQL equivalente', {}, ['titulo','receita_usd','margem'], [['A',100,60.0]], False)
+        obtained = {'answer':{'status':'resultado'}, 'consultas':[asdict(query)]}
+        self.assertEqual(self.evaluation.grade(case,[reference],obtained), (True,True))
+        query.linhas[0][-1] = 61.0
+        obtained['consultas'] = [asdict(query)]
+        self.assertEqual(self.evaluation.grade(case,[reference],obtained), (True,False))
+        director = next(c for c in self.evaluation.load_cases() if c['id'] == '08_diretor_nota')
+        reference = self.reference(director['id'])
+        query = QueryEvidence('SQL equivalente', {}, ['diretor','qtd_filmes','media_imdb','media_tmdb'],
+                              [['Diretor Cinco',5,8.0,0.0]], False)
+        obtained['consultas'] = [asdict(query)]
+        self.assertEqual(self.evaluation.grade(director,[reference],obtained), (True,True))
+        query.linhas.append(['Outro Diretor',5,7.0,0.0])
+        obtained['consultas'] = [asdict(query)]
+        self.assertEqual(self.evaluation.grade(director,[reference],obtained), (True,False))
+
 
 class AgentTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -241,6 +272,19 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
             await self.ask([("consultar_sql", {"sql":"SELECT :x FROM dim_movies","parametros":{"x":True}})])
         self.assertLessEqual(self.calls, 3)
 
+    async def test_correcao_recebe_coluna_invalida_sem_caminho(self):
+        from pydantic_ai.messages import ModelResponse,ToolCallPart,RetryPromptPart
+        async def correct(messages,info):
+            retry=next(part for message in messages for part in message.parts if isinstance(part,RetryPromptPart))
+            sql="SELECT m.titulo FROM dim_movies m ORDER BY m.sk_movie_id" if "no such column: f.titulo" in str(retry.content) else "SELECT f.titulo FROM fact_movies_performance f"
+            return ModelResponse([ToolCallPart("consultar_sql",{"sql":sql,"parametros":{}})])
+        result=await self.ask([("consultar_sql",{"sql":"SELECT f.titulo FROM fact_movies_performance f","parametros":{}}),correct,self.answer()])
+        self.assertEqual(result.consultas[0].linhas,[["O'Brien"],["Outro"]])
+        self.assertEqual(result.uso["tentativas_sql"],2)
+        with self.assertRaises(self.db.QueryInvalid) as caught:
+            self.db.execute_readonly(self.path,'SELECT f."D:/private/secret" FROM fact_movies_performance f',{})
+        self.assertNotIn("D:/private",str(caught.exception))
+
     async def test_bloqueio_nao_repete(self):
         before = hashlib.sha256(self.path.read_bytes()).hexdigest()
         result = await self.ask([("consultar_sql", {"sql":"DELETE FROM dim_movies","parametros":{}})])
@@ -284,10 +328,17 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         from openai import APIConnectionError
         from pydantic_ai.exceptions import ModelHTTPError
         with self.assertRaises(self.agent.ProviderUnavailable):
-            await self.ask([APIConnectionError(request=httpx.Request("POST","http://127.0.0.1:8081/v1"))])
+            await self.ask([APIConnectionError(request=httpx.Request("POST","https://api.groq.com/openai/v1"))])
         self.assertEqual(self.calls,1)
         with self.assertRaises(self.agent.InvalidAgentResult):
-            await self.ask([ModelHTTPError(400,"qwen3.5-9b",{"error":"context exceeded"})])
+            await self.ask([ModelHTTPError(400,"openai/gpt-oss-120b",{"error":"context exceeded"})])
+        self.assertEqual(self.calls,1)
+        for status in [401,403]:
+            with self.subTest(status=status),self.assertRaises(self.agent.ProviderUnavailable):
+                await self.ask([ModelHTTPError(status,"openai/gpt-oss-120b",{"error":"secret"})])
+        limited = getattr(self.agent,"ProviderRateLimited",self.agent.ProviderUnavailable)
+        with self.assertRaises(limited):
+            await self.ask([ModelHTTPError(429,"openai/gpt-oss-120b",{"error":"secret"})])
         self.assertEqual(self.calls,1)
         async def slow(messages,info):
             await asyncio.sleep(1)
@@ -295,12 +346,14 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
             await self.ask([slow],timeout_seconds=0.03)
         with self.assertRaises(self.agent.QuestionTimedOut):
             await self.ask([("consultar_sql",{"sql":"WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n) SELECT SUM(x) FROM n","parametros":{}})],timeout_seconds=0.05)
-        for url in ["https://api.openai.com/v1","http://example.com/v1","http://127.0.0.1.example.com/v1","http://user:pass@localhost:8081/v1"]:
+        for url in ["https://api.openai.com/v1","http://example.com/v1","https://api.groq.com.evil/openai/v1","https://api.groq.com/openai/v1?key=secret"]:
             with self.subTest(url=url),self.assertRaises(ValueError):
-                self.agent.create_local_model(url,"qwen3.5-9b")
-        model,client=self.agent.create_local_model("http://127.0.0.1:8081/v1","qwen3.5-9b")
+                self.agent.create_groq_model(url,"openai/gpt-oss-120b","gsk-test")
+        model,client=self.agent.create_groq_model("https://api.groq.com/openai/v1","openai/gpt-oss-120b","gsk-test")
         self.assertEqual(client.max_retries,0)
         await client.close()
+        with self.assertRaises(ValueError):
+            self.agent.create_groq_model("https://api.groq.com/openai/v1","openai/gpt-oss-120b","")
 
     async def test_cancelamento_aguarda_worker_sql(self):
         started, finished = Event(), Event()
@@ -322,6 +375,45 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
                     await task
                 self.assertTrue(finished.is_set())
 
+    async def test_adapter_exige_ferramenta_para_saida_tipada(self):
+        import httpx
+        from openai import AsyncOpenAI
+        from pydantic_ai.models.openai import OpenAIChatModel
+        from pydantic_ai.providers.openai import OpenAIProvider
+        probe,real_client=self.agent.create_groq_model("https://api.groq.com/openai/v1","openai/gpt-oss-120b","gsk-test")
+        profile=probe.profile
+        await real_client.close()
+        requests=[]
+        def transport(request):
+            self.assertEqual(str(request.url),"https://api.groq.com/openai/v1/chat/completions")
+            self.assertEqual(request.headers["authorization"],"Bearer gsk-test")
+            body=json.loads(request.content)
+            self.assertNotIn("chat_template_kwargs",body)
+            self.assertEqual(body["reasoning_effort"],"medium")
+            self.assertEqual(body["max_completion_tokens"],2048)
+            requests.append(body)
+            if len(requests)==1:
+                message={"role":"assistant","tool_calls":[{"id":"sql","type":"function","function":{"name":"consultar_sql","arguments":json.dumps({"sql":"SELECT COUNT(*) AS filmes FROM dim_movies","parametros":{}})}}]}
+                reason="tool_calls"
+            elif body["tool_choice"]=="required":
+                message={"role":"assistant","tool_calls":[{"id":"answer","type":"function","function":{"name":"responder","arguments":json.dumps(self.answer()[1])}}]}
+                reason="tool_calls"
+            else:
+                message={"role":"assistant","content":"Há dois filmes."}
+                reason="stop"
+            return httpx.Response(200,json={"id":"mock","object":"chat.completion","created":0,"model":"openai/gpt-oss-120b",
+                                           "choices":[{"index":0,"message":message,"finish_reason":reason}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}})
+        client=AsyncOpenAI(base_url="https://api.groq.com/openai/v1",api_key="gsk-test",max_retries=0,
+                           http_client=httpx.AsyncClient(transport=httpx.MockTransport(transport)))
+        try:
+            model=OpenAIChatModel("openai/gpt-oss-120b",provider=OpenAIProvider(openai_client=client),profile=profile)
+            result=await self.agent.responder("Quantos filmes?",self.path,date(2026,9,30),model)
+            self.assertEqual(result.answer.status,"resultado")
+            self.assertEqual(len(requests),2)
+            self.assertTrue(all(body["tool_choice"]=="required" for body in requests))
+        finally:
+            await client.close()
+
 
 class HTTPTests(unittest.TestCase):
     def setUp(self):
@@ -330,9 +422,9 @@ class HTTPTests(unittest.TestCase):
             self.main = importlib.import_module("app.main")
         except ModuleNotFoundError as error:
             self.fail(f"API ainda ausente: {error.name}")
-        self.env = patch.dict(os.environ, {"DATABASE_PATH":str(self.path),"MODEL_PROVIDER":"llamafile",
-                                         "MODEL_BASE_URL":"http://127.0.0.1:8081/v1","MODEL_NAME":"qwen3.5-9b",
-                                         "QUESTION_TIMEOUT_SECONDS":"180"})
+        self.env = patch.dict(os.environ, {"DATABASE_PATH":str(self.path),"MODEL_PROVIDER":"groq",
+                                         "MODEL_BASE_URL":"https://api.groq.com/openai/v1","MODEL_NAME":"openai/gpt-oss-120b",
+                                         "QUESTION_TIMEOUT_SECONDS":"600","GROQ_API_KEY":"gsk-test"})
         self.env.start()
         self.addCleanup(self.env.stop)
 
@@ -352,7 +444,7 @@ class HTTPTests(unittest.TestCase):
     def test_resposta_tem_evidencias_reais(self):
         from app.agent import AgentAnswer,QuestionResult
         evidence=self.db.execute_readonly(self.path,"SELECT COUNT(*) AS filmes FROM dim_movies",{})
-        result=QuestionResult(AgentAnswer(status="resultado",resposta="Há dois filmes."),[evidence],"qwen3.5-9b",
+        result=QuestionResult(AgentAnswer(status="resultado",resposta="Há dois filmes."),[evidence],"openai/gpt-oss-120b",
                               {"chamadas":2,"tokens_entrada":None,"tokens_saida":None,"tentativas_sql":1})
         with patch("app.main.responder",new_callable=AsyncMock,return_value=result) as respond,self.client() as client:
             response=client.post("/perguntas",json={"pergunta":"  Quantos filmes?  "})
@@ -364,9 +456,10 @@ class HTTPTests(unittest.TestCase):
             self.assertEqual(args[2],date.today())
 
     def test_erros_http_sem_detalhes_sensiveis(self):
-        from app.agent import ProviderUnavailable,InvalidAgentResult,QuestionTimedOut
+        from app.agent import ProviderRateLimited,ProviderUnavailable,InvalidAgentResult,QuestionTimedOut
         for error,code,status in [(ProviderUnavailable,"modelo_indisponivel",503),(self.db.DatabaseUnavailable,"banco_indisponivel",503),
-                                  (InvalidAgentResult,"resposta_invalida",502),(QuestionTimedOut,"prazo_excedido",504)]:
+                                  (InvalidAgentResult,"resposta_invalida",502),(QuestionTimedOut,"prazo_excedido",504),
+                                  (ProviderRateLimited,"cota_excedida",503)]:
             with self.subTest(error=error.__name__),patch("app.main.responder",new_callable=AsyncMock,side_effect=error("secret-key D:/private Traceback")),self.client() as client:
                 response=client.post("/perguntas",json={"pergunta":"Pergunta"})
                 self.assertEqual(response.status_code,status)
@@ -377,13 +470,62 @@ class HTTPTests(unittest.TestCase):
             self.assertEqual(client.get("/health").status_code,503)
 
     def test_configuracao_invalida_sem_fallback(self):
-        for config in [{"MODEL_PROVIDER":"groq"},{"MODEL_BASE_URL":"https://api.openai.com/v1"},{"QUESTION_TIMEOUT_SECONDS":"nan"}]:
+        for config in [{"MODEL_PROVIDER":"llamacpp"},{"MODEL_BASE_URL":"https://api.openai.com/v1"},{"GROQ_API_KEY":""},{"QUESTION_TIMEOUT_SECONDS":"nan"}]:
             with self.subTest(config=config),patch.dict(os.environ,config),patch("app.main.responder",new_callable=AsyncMock) as respond,self.client() as client:
                 self.assertEqual(client.get("/health").status_code,200)
                 response=client.post("/perguntas",json={"pergunta":"Quantos filmes?"})
                 self.assertEqual(response.status_code,503)
                 self.assertEqual(response.json()["detail"]["codigo"],"configuracao_invalida")
                 respond.assert_not_called()
+
+    def test_groq_mantem_restricao_de_endereco(self):
+        from app.agent import ProviderUnavailable
+        with patch("app.main.responder",new_callable=AsyncMock,side_effect=ProviderUnavailable("offline")),self.client() as client:
+            response=client.post("/perguntas",json={"pergunta":"Quantos filmes?"})
+            self.assertEqual(response.json()["detail"]["codigo"],"modelo_indisponivel")
+        with patch.dict(os.environ,{"MODEL_BASE_URL":"https://api.openai.com/v1"}),self.client() as client:
+            response=client.post("/perguntas",json={"pergunta":"Quantos filmes?"})
+            self.assertEqual(response.json()["detail"]["codigo"],"configuracao_invalida")
+
+
+class EvaluationTests(unittest.TestCase):
+    def setUp(self):
+        DatabaseTests.setUp(self)
+        self.evaluation=importlib.import_module("evaluation.run")
+
+    def test_avaliacao_sem_api_por_padrao(self):
+        from app.agent import ProviderUnavailable
+        output=self.path.with_suffix(".json")
+        with patch("app.agent.create_groq_model") as create,patch("evaluation.run.load_cases",return_value=[]):
+            self.evaluation.main(["--database",str(self.path),"--output",str(output)])
+            self.evaluation.main(["--references-only","--database",str(self.path),"--output",str(output)])
+            create.assert_not_called()
+        from app.agent import AgentAnswer,QuestionResult
+        case={"id":"fake","categoria":"financeiro","pergunta":"Quantos filmes?","data_referencia":"2026-09-30",
+              "status_esperado":"resultado","regras":[],"referencias":[{"sql":"SELECT COUNT(*) AS filmes FROM dim_movies","parametros":{}}],
+              "ordenado":True,"abs_tol":0,"rel_tol":0}
+        result=QuestionResult(AgentAnswer(status="resultado",resposta="Dois filmes."),
+                              [self.db.execute_readonly(self.path,case["referencias"][0]["sql"],{})],"simulado",
+                              {"chamadas":2,"tokens_entrada":20,"tokens_saida":10,"tentativas_sql":1})
+        for outcome,expected in [(result,"correto"),(ProviderUnavailable("offline"),"erro")]:
+            with patch.dict(os.environ,{"MODEL_PROVIDER":"groq","GROQ_API_KEY":"gsk-test","MODEL_RUNTIME":"Groq API"}),patch("evaluation.run.load_cases",return_value=[case]),patch("app.agent.create_groq_model",return_value=(object(),AsyncMock())):
+                with patch("app.agent.responder",new_callable=AsyncMock) as respond:
+                    if isinstance(outcome,Exception):respond.side_effect=outcome
+                    else:respond.return_value=outcome
+                    self.evaluation.main(["--smoke","--database",str(self.path),"--output",str(output)])
+                    report=json.loads(output.read_text(encoding="utf-8"))
+                    self.assertEqual(report["runtime_configurado"],"Groq API")
+                    self.assertEqual(report["casos"][0]["veredito"],expected)
+                    self.assertLessEqual(respond.call_count,1)
+        cases=self.evaluation.select_cases(importlib.import_module("evaluation.run").load_cases(),smoke=True)
+        self.assertEqual(len(cases),5)
+        self.assertEqual(len({c["categoria"] for c in cases}),5)
+
+    def test_prazo_avaliacao_invalido(self):
+        with patch("evaluation.run.load_cases",return_value=[]):
+            for timeout in ["0","-1","nan","inf"]:
+                with self.subTest(timeout=timeout),self.assertRaises(SystemExit):
+                    self.evaluation.main(["--smoke","--timeout",timeout])
 
 
 if __name__ == "__main__":

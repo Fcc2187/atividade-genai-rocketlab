@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import json
 import math
 from pathlib import Path
+import re
 import sqlite3
 import time
 from threading import Event
@@ -62,6 +63,8 @@ def _connect(path: Path) -> sqlite3.Connection:
         connection = sqlite3.connect(resolved.as_uri() + "?mode=ro&immutable=1", uri=True)
         try:
             connection.execute("SELECT name FROM sqlite_master LIMIT 1").fetchall()
+            # Ajuste da conexão somente leitura; não altera o arquivo SQLite estático.
+            connection.execute("PRAGMA mmap_size=1073741824").fetchone()
         except sqlite3.Error:
             connection.close()
             raise
@@ -179,4 +182,6 @@ def execute_readonly(
                 raise QueryTimedOut("Prazo da consulta esgotado.") from error
             if isinstance(error, sqlite3.ProgrammingError) and "one statement" in str(error).lower():
                 raise QueryRejected("Somente uma instrução SQL é permitida.") from error
-            raise QueryInvalid("SQL ou parâmetros inválidos.") from error
+            # Só identificadores simples: ajuda a corrigir aliases sem expor SQL, valores ou caminhos.
+            diagnostic = re.fullmatch(r"(?:no such column|ambiguous column name): [A-Za-z_][A-Za-z0-9_.]{0,127}", str(error))
+            raise QueryInvalid(diagnostic[0] if diagnostic else "SQL ou parâmetros inválidos.") from error
