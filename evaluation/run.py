@@ -102,7 +102,7 @@ def select_cases(cases: list[dict], *, smoke: bool) -> list[dict]:
     return selected
 
 
-async def evaluate(cases: list[dict], database: Path, timeout: float, output: Path):
+async def evaluate(cases: list[dict], database: Path, timeout: float, output: Path, *, interval: float = 0):
     from app.agent import InvalidAgentResult, ProviderRateLimited, ProviderUnavailable, QuestionTimedOut, create_groq_model, responder
     from app.database import DatabaseUnavailable, QueryTimedOut
     if os.getenv("MODEL_PROVIDER", "groq") != "groq":
@@ -112,10 +112,14 @@ async def evaluate(cases: list[dict], database: Path, timeout: float, output: Pa
                                       name, os.getenv("GROQ_API_KEY", ""))
     report = {"modelo":name, "provedor":"groq", "runtime_configurado":"Groq API",
               "quantizacao_configurada":None, "contexto_configurado":None, "prazo_segundos":timeout,
+              "intervalo_segundos":interval,
               "explicacoes":"Requerem revisão manual; acerto automático avalia status e linhas.", "casos":[]}
     output.parent.mkdir(parents=True, exist_ok=True)
     try:
-        for case in cases:
+        for index, case in enumerate(cases):
+            if index and interval:
+                print(f"Intervalo solicitado entre perguntas: {interval:g} s.", flush=True)
+                await asyncio.sleep(interval)
             expected = [await asyncio.to_thread(execute_readonly,database,ref["sql"],ref["parametros"]) for ref in case["referencias"]]
             if any(item.truncado for item in expected):
                 raise ValueError(f"Referência truncada: {case['id']}")
@@ -157,8 +161,11 @@ def main(argv: list[str] | None = None):
     parser.add_argument("--database", type=Path)
     parser.add_argument("--case", action="append", dest="case_ids", help="Restringe a IDs para verificar correções.")
     parser.add_argument("--timeout", type=float)
+    parser.add_argument("--interval", type=float, default=0, help="Espera explícita entre perguntas para respeitar cotas; não repete chamadas.")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
+    if not math.isfinite(args.interval) or args.interval < 0:
+        parser.error("Intervalo deve ser finito e não negativo.")
     load_dotenv(ROOT / ".env")
     database = args.database or Path(os.getenv("DATABASE_PATH", "cinerocket (1).db"))
     if not database.is_absolute():
@@ -173,7 +180,7 @@ def main(argv: list[str] | None = None):
         timeout = args.timeout if args.timeout is not None else float(os.getenv("QUESTION_TIMEOUT_SECONDS", "600"))
         if not math.isfinite(timeout) or timeout <= 0:
             parser.error("Prazo deve ser finito e positivo.")
-        asyncio.run(evaluate(select_cases(cases,smoke=args.smoke),database,timeout,args.output or ROOT / "runtime" / "model-results.json"))
+        asyncio.run(evaluate(select_cases(cases,smoke=args.smoke),database,timeout,args.output or ROOT / "runtime" / "model-results.json",interval=args.interval))
         return
     results = []
     for case in cases:

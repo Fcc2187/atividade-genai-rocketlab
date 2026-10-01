@@ -213,6 +213,24 @@ class AnalyticalTests(unittest.TestCase):
         query.linhas.append(['Outro Diretor',5,7.0,0.0])
         obtained['consultas'] = [asdict(query)]
         self.assertEqual(self.evaluation.grade(director,[reference],obtained), (True,False))
+        actor = next(c for c in self.evaluation.load_cases() if c['id'] == '07_ator_cinco_anos')
+        reference = self.reference(actor['id'])
+        query = QueryEvidence('SQL equivalente', {}, ['nome_pessoa','qtd_filmes','sk_person_id'],
+                              [['Ator A',3,'p3']], False)
+        obtained['consultas'] = [asdict(query)]
+        self.assertEqual(self.evaluation.grade(actor,[reference],obtained), (True,True))
+        query.linhas[0][1] = 4
+        obtained['consultas'] = [asdict(query)]
+        self.assertEqual(self.evaluation.grade(actor,[reference],obtained), (True,False))
+        genre = next(c for c in self.evaluation.load_cases() if c['id'] == '02_lucro_genero')
+        reference = self.reference(genre['id'])
+        query = QueryEvidence('SQL equivalente', {}, ['genero','qtd_filmes','lucro_medio_usd'],
+                              [[r[1],r[3],r[2]] for r in reference.linhas], False)
+        obtained['consultas'] = [asdict(query)]
+        self.assertEqual(self.evaluation.grade(genre,[reference],obtained), (True,True))
+        query.linhas[0][2] += 1
+        obtained['consultas'] = [asdict(query)]
+        self.assertEqual(self.evaluation.grade(genre,[reference],obtained), (True,False))
 
 
 class AgentTests(unittest.IsolatedAsyncioTestCase):
@@ -225,7 +243,7 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
 
     def model(self, steps):
         from pydantic_ai.models.function import FunctionModel
-        from pydantic_ai.messages import ModelResponse, ToolCallPart
+        from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
         from pydantic_ai.usage import RequestUsage
         self.calls = 0
 
@@ -238,7 +256,7 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
                 return await step(messages, info)
             name, args = step
             if name == "answer":
-                name = info.output_tools[0].name
+                return ModelResponse([TextPart(json.dumps(args))], usage=RequestUsage(input_tokens=10, output_tokens=5))
             return ModelResponse([ToolCallPart(name, args)], usage=RequestUsage(input_tokens=10, output_tokens=5))
         return FunctionModel(respond)
 
@@ -295,10 +313,10 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_estado_isolado_entre_perguntas(self):
         from pydantic_ai.models.function import FunctionModel
-        from pydantic_ai.messages import ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
+        from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
         async def respond(messages, info):
             if any(isinstance(part,ToolReturnPart) for m in messages for part in m.parts):
-                return ModelResponse([ToolCallPart(info.output_tools[0].name,self.answer()[1])])
+                return ModelResponse([TextPart(json.dumps(self.answer()[1]))])
             title=next(part.content for m in messages for part in m.parts if isinstance(part,UserPromptPart))
             return ModelResponse([ToolCallPart("consultar_sql",{"sql":"SELECT titulo FROM dim_movies WHERE titulo=:titulo","parametros":{"titulo":title}})])
         model=FunctionModel(respond)
@@ -330,6 +348,14 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(self.agent.ProviderUnavailable):
             await self.ask([APIConnectionError(request=httpx.Request("POST","https://api.groq.com/openai/v1"))])
         self.assertEqual(self.calls,1)
+        from pydantic_ai.exceptions import ModelAPIError
+        with self.assertRaises(self.agent.ProviderUnavailable):
+            await self.ask([ModelAPIError("openai/gpt-oss-120b","Connection error.")])
+        from openai import APITimeoutError
+        async def wrapped_timeout(messages,info):
+            raise ModelAPIError("openai/gpt-oss-120b","Timeout.") from APITimeoutError(request=httpx.Request("POST","https://api.groq.com/openai/v1"))
+        with self.assertRaises(self.agent.QuestionTimedOut):
+            await self.ask([wrapped_timeout])
         with self.assertRaises(self.agent.InvalidAgentResult):
             await self.ask([ModelHTTPError(400,"openai/gpt-oss-120b",{"error":"context exceeded"})])
         self.assertEqual(self.calls,1)
@@ -375,7 +401,7 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
                     await task
                 self.assertTrue(finished.is_set())
 
-    async def test_adapter_exige_ferramenta_para_saida_tipada(self):
+    async def test_adapter_valida_json_final_sem_exigir_tool_de_saida(self):
         import httpx
         from openai import AsyncOpenAI
         from pydantic_ai.models.openai import OpenAIChatModel
@@ -384,10 +410,13 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         profile=probe.profile
         await real_client.close()
         requests=[]
+        invalid=False
         def transport(request):
             self.assertEqual(str(request.url),"https://api.groq.com/openai/v1/chat/completions")
             self.assertEqual(request.headers["authorization"],"Bearer gsk-test")
             body=json.loads(request.content)
+            if "response_format" in body:
+                return httpx.Response(400,json={"error":{"message":"json mode cannot be combined with tool/function calling"}})
             self.assertNotIn("chat_template_kwargs",body)
             self.assertEqual(body["reasoning_effort"],"medium")
             self.assertEqual(body["max_completion_tokens"],2048)
@@ -395,11 +424,10 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
             if len(requests)==1:
                 message={"role":"assistant","tool_calls":[{"id":"sql","type":"function","function":{"name":"consultar_sql","arguments":json.dumps({"sql":"SELECT COUNT(*) AS filmes FROM dim_movies","parametros":{}})}}]}
                 reason="tool_calls"
-            elif body["tool_choice"]=="required":
-                message={"role":"assistant","tool_calls":[{"id":"answer","type":"function","function":{"name":"responder","arguments":json.dumps(self.answer()[1])}}]}
-                reason="tool_calls"
             else:
-                message={"role":"assistant","content":"Há dois filmes."}
+                if body["tool_choice"]=="required":
+                    return httpx.Response(400,json={"error":{"message":"Tool choice is required, but model did not call a tool","code":"tool_use_failed"}})
+                message={"role":"assistant","content":"{}" if invalid else json.dumps(self.answer()[1])}
                 reason="stop"
             return httpx.Response(200,json={"id":"mock","object":"chat.completion","created":0,"model":"openai/gpt-oss-120b",
                                            "choices":[{"index":0,"message":message,"finish_reason":reason}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}})
@@ -410,7 +438,13 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
             result=await self.agent.responder("Quantos filmes?",self.path,date(2026,9,30),model)
             self.assertEqual(result.answer.status,"resultado")
             self.assertEqual(len(requests),2)
-            self.assertTrue(all(body["tool_choice"]=="required" for body in requests))
+            self.assertTrue(all(body["tool_choice"]=="auto" for body in requests))
+            self.assertTrue(all("response_format" not in body for body in requests))
+            requests.clear()
+            invalid=True
+            with self.assertRaises(self.agent.InvalidAgentResult):
+                await self.agent.responder("Quantos filmes?",self.path,date(2026,9,30),model)
+            self.assertEqual(len(requests),2)  # Saída inválida não gera retry oculto.
         finally:
             await client.close()
 
@@ -517,6 +551,10 @@ class EvaluationTests(unittest.TestCase):
                     self.assertEqual(report["runtime_configurado"],"Groq API")
                     self.assertEqual(report["casos"][0]["veredito"],expected)
                     self.assertLessEqual(respond.call_count,1)
+        with patch.dict(os.environ,{"MODEL_PROVIDER":"groq","GROQ_API_KEY":"gsk-test"}),patch("evaluation.run.load_cases",return_value=[case,case]),patch("app.agent.create_groq_model",return_value=(object(),AsyncMock())):
+            with patch("app.agent.responder",new_callable=AsyncMock,return_value=result),patch("evaluation.run.asyncio.sleep",new_callable=AsyncMock) as pause:
+                self.evaluation.main(["--all","--interval","60","--database",str(self.path),"--output",str(output)])
+                pause.assert_awaited_once_with(60)
         cases=self.evaluation.select_cases(importlib.import_module("evaluation.run").load_cases(),smoke=True)
         self.assertEqual(len(cases),5)
         self.assertEqual(len({c["categoria"] for c in cases}),5)
@@ -526,6 +564,9 @@ class EvaluationTests(unittest.TestCase):
             for timeout in ["0","-1","nan","inf"]:
                 with self.subTest(timeout=timeout),self.assertRaises(SystemExit):
                     self.evaluation.main(["--smoke","--timeout",timeout])
+            for interval in ["-1","nan","inf"]:
+                with self.subTest(interval=interval),self.assertRaises(SystemExit):
+                    self.evaluation.main(["--all","--interval",interval])
 
 
 if __name__ == "__main__":

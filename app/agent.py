@@ -6,16 +6,18 @@ from datetime import date
 import math
 from pathlib import Path
 import re
+import ssl
 from threading import Event
 import time
 from typing import Annotated, Literal
 
 import httpx
+import truststore
 from openai import AsyncOpenAI, APIConnectionError, APITimeoutError
 from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, StrictStr
-from pydantic_ai import Agent, ModelRetry, RunContext, ToolOutput, UsageLimits
+from pydantic_ai import Agent, ModelRetry, PromptedOutput, RunContext, UsageLimits
 from pydantic_ai.capabilities import Hooks
-from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior, UsageLimitExceeded
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import Model
 from pydantic_ai.models.openai import OpenAIChatModel
@@ -65,9 +67,9 @@ class _State:
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
-RULES = """Você é um analista do catálogo CineData. Responda em português com a ferramenta de saída responder.
-Emita somente chamadas de ferramenta, sem texto fora delas. A resposta ao usuário aparece só em responder;
-não a escreva também como texto livre antes da chamada.
+RULES = """Você é um analista do catálogo CineData. Responda em português em um único objeto JSON final.
+Use consultar_sql para obter evidências; depois retorne o JSON com status, resposta e avisos.
+Não escreva texto livre fora do JSON nem repita a resposta antes dele.
 Para fatos ou números do catálogo, execute consultar_sql antes de responder; nunca invente dados.
 Use SQLite SELECT/CTE, uma instrução, parâmetros nomeados para valores e aliases claros.
 O banco é somente leitura. Recuse escrita, shell, anexação, metadados técnicos e pedidos fora do catálogo.
@@ -119,10 +121,11 @@ def create_groq_model(base_url: str, name: str, api_key: str) -> tuple[OpenAICha
     if not api_key.strip() or not name.strip():
         raise ValueError("Configure GROQ_API_KEY e MODEL_NAME.")
     # Sem proxy do ambiente nem redirects para outros destinos com a credencial.
-    transport = httpx.AsyncClient(trust_env=False, follow_redirects=False)
+    transport = httpx.AsyncClient(verify=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT),
+                                 trust_env=False, follow_redirects=False)
     client = AsyncOpenAI(base_url=base_url, api_key=api_key.strip(), max_retries=0, http_client=transport)
     model = OpenAIChatModel(name, provider=OpenAIProvider(openai_client=client),
-                            profile={"supports_forced_tool_choice": True, "openai_supports_strict_tool_definition": False})
+                            profile={"supports_json_object_output": False, "openai_supports_strict_tool_definition": False})
     return model, client
 
 
@@ -154,7 +157,7 @@ async def responder(pergunta: str, database_path: Path, referencia: date, model:
                       "Em análises por ano, exclua futuros com data_lancamento <= :referencia, salvo pedido explícito. "
                       "Se a pergunta pedir o maior/melhor filme, diretor ou par no singular, use LIMIT 1; não acrescente top 10. "
                       "Confira período e quantidade solicitados antes de executar.")
-            agent = Agent(model, output_type=ToolOutput(AgentAnswer, name="responder", max_retries=0, strict=False),
+            agent = Agent(model, output_type=PromptedOutput(AgentAnswer),
                           instructions=prompt, deps_type=_State, retries=0, capabilities=[hooks],
                           model_settings={"max_tokens":2048, "temperature":0, "parallel_tool_calls":False,
                                           "tool_choice":"auto", "openai_reasoning_effort":"medium"})
@@ -210,6 +213,10 @@ async def responder(pergunta: str, database_path: Path, referencia: date, model:
         if error.status_code >= 500 or error.status_code in (401,403):
             raise ProviderUnavailable("Groq indisponível; confira conexão e credencial.") from error
         raise InvalidAgentResult("Modelo recusou a solicitação ou excedeu o contexto.") from error
+    except ModelAPIError as error:
+        if isinstance(error.__cause__, APITimeoutError):
+            raise QuestionTimedOut("Prazo da pergunta esgotado.") from error
+        raise ProviderUnavailable("Groq indisponível.") from error
     except (UnexpectedModelBehavior, UsageLimitExceeded) as error:
         raise InvalidAgentResult("Resposta inválida ou limite de chamadas atingido.") from error
     return QuestionResult(answer, state.consultas, model.model_name,

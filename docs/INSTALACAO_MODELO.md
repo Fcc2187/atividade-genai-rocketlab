@@ -61,6 +61,6 @@ Não instalar pesos nem iniciar servidor de modelo. O ambiente Python existente 
 
 O plano gratuito publica para esse modelo 30 requisições/minuto, 1000/dia, 8000 tokens/minuto e 200000/dia na consulta de 01/10/2026. O primeiro limite atingido restringe o uso; conferir valores exatos da organização. [Limites oficiais](https://console.groq.com/docs/rate-limits).
 
-## Validação pendente
+## Validação
 
-Os testes automatizados usam transporte simulado; a inferência real, qualidade, latência e consumo serão medidos depois de configurar a chave. Não publicar a chave nos relatórios. As instruções completas de instalação Python, banco e avaliação estão no [README](../README.md).
+29 testes automatizados aprovados e cinco categorias avaliadas com Groq real, com status e linhas corretos, entre 2,05 e 4,50 segundos. A bateria ampliada continua em andamento. Não publicar a chave nos relatórios. Para avaliar respeitando a cota, usar `python -X utf8 -m evaluation.run --smoke --interval 60`; a espera entre perguntas não é incluída na latência. As instruções completas de instalação Python, banco e avaliação estão no [README](../README.md).

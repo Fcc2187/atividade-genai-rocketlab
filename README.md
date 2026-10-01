@@ -2,7 +2,7 @@
 
 Backend FastAPI para consultar o catálogo CineData em português. Usa Pydantic AI e **openai/gpt-oss-120b via Groq**, com SQLite somente leitura. API e banco ficam locais; a inferência exige internet e chave Groq. Perguntas são independentes, sem memória.
 
-**Estado em 01/10/2026:** migração para Groq implementada e testes automatizados aprovados. A avaliação real do Groq aguarda uma chave configurada. Resultados antigos do Qwen local não comprovam a qualidade deste modelo. Interface será discutida depois do backend validado.
+**Estado em 01/10/2026:** Groq conectado, 29 testes automatizados aprovados e cinco categorias reais conferidas, com respostas entre 2,05 e 4,50 s. A avaliação ampliada está em andamento. Resultados antigos do Qwen local não comprovam a qualidade deste modelo. Interface será discutida depois do backend validado.
 
 ## Preparar o ambiente
 
@@ -58,7 +58,7 @@ Erros: 422 para entrada inválida; 503 para banco/configuração/Groq indisponí
 
 ## Limites e dados enviados
 
-Até três chamadas de modelo e duas tentativas SQL por pergunta. Raciocínio inicial `medium`, até 2048 tokens de geração por chamada, temperatura zero e ferramentas sequenciais. O limite de geração precisa ser validado com o modelo real e inclui o orçamento de raciocínio. Prazo total 600 segundos é um teto herdado da avaliação, não uma promessa de latência.
+Até três chamadas de modelo e duas tentativas SQL por pergunta. Raciocínio `medium`, até 2048 tokens de geração por chamada, temperatura zero e ferramentas sequenciais. O limite de geração inclui raciocínio e passou nos cinco casos iniciais; a avaliação ampliada verifica casos maiores. Prazo total 600 segundos é um teto herdado da avaliação, não uma promessa de latência.
 
 Pergunta, esquema do banco e resultados da ferramenta são enviados ao Groq. O arquivo SQLite permanece local e as consultas rodam no computador. O cliente aceita somente o endpoint HTTPS oficial, sem proxies do ambiente, redirects, retries ou fallback.
 
@@ -66,7 +66,7 @@ Na consulta de 01/10/2026, o plano gratuito publica 30 requisições/minuto, 100
 
 ## Proteção SQL
 
-Uma ferramenta de dados, `consultar_sql`, e resposta estruturada `responder`. Banco estático aberto com `mode=ro&immutable=1`, após verificar ausência de WAL/journal pendente. Conexões fechadas após a consulta; cancelamento interrompe e aguarda o worker.
+Uma ferramenta de dados, `consultar_sql`, e resposta JSON validada pelo Pydantic (`PromptedOutput`). O Groq não permite combinar seu modo JSON com ferramentas nessa API; a aplicação rejeita respostas fora do contrato, sem extrair conteúdo de erros do provedor. Banco estático aberto com `mode=ro&immutable=1`, após verificar ausência de WAL/journal pendente. Conexões fechadas após a consulta; cancelamento interrompe e aguarda o worker.
 
 Autorização SQLite permite somente dez tabelas de negócio e funções analíticas aprovadas. Escrita, DDL, anexação, PRAGMAs do modelo e metadados técnicos são bloqueados. Uma instrução por chamada, com parâmetros vinculados.
 
@@ -82,15 +82,16 @@ Limites: 20 segundos por SQL, 100 linhas, 10000 caracteres de SQL, 50 parâmetro
 .\.venv\Scripts\python.exe -X utf8 -m evaluation.run --references-only
 
 # Chamadas reais ao Groq: exigem chave e consomem cotas.
-.\.venv\Scripts\python.exe -X utf8 -m evaluation.run --smoke
+.\.venv\Scripts\python.exe -X utf8 -m evaluation.run --smoke --interval 60
+.\.venv\Scripts\python.exe -X utf8 -m evaluation.run --all --interval 60
 .\.venv\Scripts\python.exe -X utf8 -m evaluation.run --all --case 17_melhores --output runtime/groq-reteste.json
 ```
 
-`evaluation/cases.json` contém 14 exemplos do enunciado e oito complementares associados às 20 regras, com data fixa 30/09/2026. `--smoke` seleciona cinco categorias; `--all` inclui os 22 casos. Executar os casos com intervalo compatível com a cota de tokens/minuto; uma bateria sequencial rápida também pode atingir HTTP429.
+`evaluation/cases.json` contém 14 exemplos do enunciado e oito complementares associados às 20 regras, com data fixa 30/09/2026. `--smoke` seleciona cinco categorias; `--all` inclui os 22 casos. `--interval 60` espera 60 segundos entre perguntas; essa espera não entra na duração de cada resposta. Não há retry automático ou espera dentro da API. Ajustar o intervalo à cota da organização; perguntas maiores ainda podem atingir HTTP429.
 
 Relatórios incrementais ficam em `runtime/`. Registram fatos/status, duração e uso; memória e quantização do servidor remoto não são medidas. Erro de cota, indisponibilidade ou prazo interrompe a bateria. Comparação admite SQL diferente, colunas extras e aliases declarados, sem aceitar truncamento ou métricas erradas. Contagens e identificadores são exatos; tolerâncias financeiras 0,01 e notas/margens 0,000001. Explicações e motivos de recusa/esclarecimento exigem revisão manual.
 
-A migração ainda não tem métricas reais de velocidade, consumo ou acerto. Preservamos os relatórios anteriores para comparação; não apresentamos seus resultados como validação do Groq.
+As cinco categorias passaram na comparação de status/linhas: receita BRL 3,89 s; popularidade 2,25 s; ator na janela móvel 4,50 s; gêneros 2,42 s; avaliações de usuários 2,05 s. Soma de latências 15,11 s, sem contar os intervalos da cota. São medições desta bateria, não uma garantia de tempo ou correção geral. A avaliação ampliada está em andamento; relatórios anteriores são históricos.
 
 ## Repositório
 

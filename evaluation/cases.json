@@ -28,6 +28,7 @@
   },
   {
     "id": "02_lucro_genero",
+    "aliases": {"genero": "nome_genero", "qtd_filmes": "filmes_validos"},
     "categoria": "financeiro",
     "pergunta": "Qual o lucro médio por gênero, considerando apenas filmes com receita informada?",
     "data_referencia": "2026-09-30",
@@ -168,6 +169,7 @@
   },
   {
     "id": "07_ator_cinco_anos",
+    "aliases": {"qtd_filmes": "filmes"},
     "categoria": "pessoas",
     "pergunta": "Qual ator participou do maior número de filmes nos últimos 5 anos?",
     "data_referencia": "2026-09-30",
