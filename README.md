@@ -1,0 +1,97 @@
+# CineData Analytics
+
+Setup concluído: Qwen3.5 9B local, ambiente Python e dependências instalados e verificados. Ferramenta SQL, agente e rotas FastAPI serão implementados nas próximas etapas.
+
+## Ambiente Python
+
+Python **3.12.14** foi localizado na instalação existente do uv e reutilizado. O ambiente virtual do projeto está em `.venv`, no D:. O `python` do PATH pode apontar para o atalho da Microsoft Store; usar diretamente o executável do ambiente:
+
+```powershell
+.\.venv\Scripts\python.exe --version
+```
+
+Para reproduzir o ambiente com [uv](https://docs.astral.sh/uv/guides/install-python/), na raiz do projeto:
+
+```powershell
+uv venv --python 3.12.14 .venv
+uv pip install --python .venv\Scripts\python.exe --link-mode copy -r requirements.txt
+uv pip check --python .venv\Scripts\python.exe
+```
+
+Esses comandos são para criar um ambiente novo. A `.venv` desta máquina já está pronta. O uv pode obter o Python se necessário; a instalação inicial das bibliotecas exige internet. `--link-mode copy` permite copiar os pacotes do cache no C: para o ambiente no D:.
+
+As 34 dependências diretas e transitivas estão fixadas em [requirements.txt](requirements.txt). Bibliotecas utilizadas diretamente:
+
+| Biblioteca | Versão |
+|---|---|
+| FastAPI | 0.142.2 |
+| Uvicorn | 0.54.0 |
+| Pydantic AI slim, extra OpenAI-compatible | 2.52.0 |
+| Pydantic | 2.13.5 |
+| SDK OpenAI, usado para o protocolo local | 3.22.1 |
+| python-dotenv | 1.2.3 |
+| HTTPX | 0.28.1 |
+
+`requirements.txt` contém também as dependências do extra `[openai]`. Fixar versões torna reproduzível este ambiente; nenhuma dependência de provedor Groq/OpenRouter foi adicionada.
+
+## Configuração local
+
+`.env.example` é a referência versionável; `.env` já foi criado e está ignorado no Git. Para uma cópia nova do projeto, criar `.env` a partir do exemplo:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Configuração atual: banco `cinerocket (1).db`, provedor `llamafile`, alias `qwen3.5-9b`, URL `http://127.0.0.1:8081/v1` e prazo provisório de 180 segundos. Nenhuma chave de nuvem é necessária. A `.python-version` registra a versão do interpretador.
+
+## Verificações do setup
+
+- Python 3.12.14 e importações das bibliotecas: aprovados.
+- Compatibilidade das 34 dependências: `uv pip check` aprovado.
+- Reprodução de `requirements.txt` em ambiente virtual limpo: instalação e importações aprovadas; ambiente temporário removido após o teste.
+- Construção de `OpenAIChatModel`/`OpenAIProvider` com cliente local e `max_retries=0`: aprovada sem chamada de inferência. Saída tipada do agente ainda será testada na implementação.
+- Banco aberto com URI `mode=ro&immutable=1`, após verificar ausência de WAL; 11 tabelas encontradas. SHA-256 preservado: `410f5beef6ab9fb34b9044d5dd191f56f3f0dc30a56e6432386ecef0d977b012`.
+- `.env`, `.venv`, pesos, runtime, banco e materiais locais estão ignorados no Git. O README e o guia de instalação acompanham o setup versionado.
+
+Essas verificações são do setup. Os bloqueios SQL, limites de consulta, gabaritos analíticos e contratos HTTP serão implementados e testados depois. Nenhum código de FastAPI ou de acesso ao banco foi criado.
+
+## Modelo local no Windows
+
+Usar a pasta do projeto no D:. O llamafile é portátil; não é necessário alterar o PATH ou instalar o modelo globalmente. Runtime e pesos separados ocupam cerca de 6,73 GB no disco e estão ignorados no Git. A prova local atingiu aproximadamente 6,5 GB de RAM residente no processo; tamanho do arquivo não equivale à memória total necessária.
+
+1. Criar os diretórios `runtime` e `models` na raiz do projeto.
+2. Baixar o [runtime completo llamafile 0.10.6](https://github.com/mozilla-ai/llamafile/releases/download/0.10.6/llamafile-0.10.6) como `runtime/llamafile.exe` e os [pesos Qwen3.5 9B Q5_K_S na revisão fixada](https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/3885219b6810b007914f3a7950a8d1b469d598a5/Qwen3.5-9B-Q5_K_S.gguf) como `models/Qwen3.5-9B-Q5_K_S.gguf`.
+3. Conferir os SHA-256 com `Get-FileHash -Algorithm SHA256` e os valores em [registro de instalação](docs/INSTALACAO_MODELO.md).
+4. Em PowerShell, na raiz do projeto, iniciar o servidor:
+
+   ```powershell
+   .\run-model.ps1
+   ```
+
+   Se a política de execução bloquear scripts locais, executar em um processo isolado, sem alterar a política do sistema:
+
+   ```powershell
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\run-model.ps1
+   ```
+
+5. Aguardar o carregamento. Em outro terminal, verificar `http://127.0.0.1:8081/health` e `http://127.0.0.1:8081/v1/models`. O alias configurado é `qwen3.5-9b`.
+
+Configuração inicial: CPU com quatro threads, contexto de 8192 tokens, uma geração ativa e ferramentas internas desativadas. A API está restrita ao próprio computador. As chamadas do cliente devem enviar `chat_template_kwargs: {"enable_thinking": false}` e limitar a geração inicialmente a 1024 tokens.
+
+Para parar o servidor, usar `Ctrl+C` no terminal em que ele foi iniciado. O modelo continua instalado no disco e será carregado novamente na próxima execução. Internet é necessária para os downloads; inferência local dispensa internet, conta e chave de nuvem.
+
+## Prova da instalação
+
+Com o servidor iniciado e Node.js disponível (22.16 usado nesta sessão), executar:
+
+```powershell
+node .\test-model.mjs
+```
+
+O script verifica o alias, uma saudação e um ciclo sintético de ferramenta com soma 7 + 5 = 12. Os resultados e tempos são gravados em `runtime/smoke-result.json`. Ele não acessa o SQLite. O Node é usado apenas nesta prova; o backend planejado será Python.
+
+Inferência verificada não substitui avaliação analítica: integração Pydantic AI, regras analíticas e exemplos do enunciado serão implementados e testados nas próximas etapas.
+
+## Banco e desenvolvimento posterior
+
+O SQLite fornecido se chama `cinerocket (1).db` e deve permanecer intacto. Obter a base nos materiais da atividade; ela não será incluída no Git. Interface será discutida somente depois do backend. Planejamento interno e materiais da atividade ficam apenas no computador local.

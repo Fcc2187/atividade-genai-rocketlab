@@ -1,0 +1,15 @@
+runtime/
+models/
+.env
+.venv/
+__pycache__/
+*.db
+*.db-wal
+*.db-shm
+
+# Documentacao e materiais locais; guia de instalacao e README sao publicados.
+/PLANEJAMENTO_TECNICO.md
+/docs/*
+!/docs/INSTALACAO_MODELO.md
+/Atividade GenAI - RocketLab 26.2 Perfis vdev.docx.pdf
+/tutorial-openrouter.html
