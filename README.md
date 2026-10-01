@@ -1,6 +1,6 @@
 # CineData Analytics
 
-Setup concluído: Qwen3.5 9B local, ambiente Python e dependências instalados e verificados. Ferramenta SQL, agente e rotas FastAPI serão implementados nas próximas etapas.
+Setup concluído e ferramenta SQL somente leitura implementada e testada. Agente e rotas FastAPI serão implementados nas próximas etapas.
 
 ## Ambiente Python
 
@@ -53,7 +53,23 @@ Configuração atual: banco `cinerocket (1).db`, provedor `llamafile`, alias `qw
 - Banco aberto com URI `mode=ro&immutable=1`, após verificar ausência de WAL; 11 tabelas encontradas. SHA-256 preservado: `410f5beef6ab9fb34b9044d5dd191f56f3f0dc30a56e6432386ecef0d977b012`.
 - `.env`, `.venv`, pesos, runtime, banco e materiais locais estão ignorados no Git. O README e o guia de instalação acompanham o setup versionado.
 
-Essas verificações são do setup. Os bloqueios SQL, limites de consulta, gabaritos analíticos e contratos HTTP serão implementados e testados depois. Nenhum código de FastAPI ou de acesso ao banco foi criado.
+As verificações acima são do setup. Os controles da ferramenta SQL também foram implementados e testados; agente, gabaritos analíticos e contratos HTTP seguem para as próximas etapas.
+
+## Ferramenta SQL protegida
+
+`app/database.py` fornece `read_schema` e `execute_readonly`. A ferramenta usa URI `mode=ro&immutable=1` para a base estática, recusa arquivos com WAL ou journal pendente e fecha a conexão após cada consulta. Não usar esse modo com uma base em atualização.
+
+A autorização do SQLite permite leitura somente das dez tabelas de negócio e funções analíticas aprovadas. Escrita, DDL, anexação de outros bancos, PRAGMAs, funções não autorizadas e tabelas técnicas são bloqueados. Valores são vinculados como parâmetros; apenas uma instrução SQL é executada.
+
+Limites iniciais: cinco segundos por consulta, até 100 linhas, SQL com até 10.000 caracteres e até 50 parâmetros escalares finitos. O resultado enviado ao agente terá até 12.000 caracteres de colunas/linhas, com textos de até 2.000 caracteres por célula. Truncamento é sinalizado; SQL e parâmetros originais são preservados como evidência. Operações SQL internas também têm limites de tamanho. O prazo externo da pergunta pode reduzir o prazo SQL.
+
+Para executar os testes sintéticos, sem iniciar o modelo:
+
+```powershell
+.\.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests -v
+```
+
+Os testes usam SQLite temporário. Leituras de contagem, receita, lucro médio por gênero e diretores também foram verificadas na base fornecida; o hash permaneceu inalterado e nenhum arquivo WAL/SHM foi criado.
 
 ## Modelo local no Windows
 
