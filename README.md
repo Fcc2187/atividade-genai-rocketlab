@@ -2,7 +2,7 @@
 
 Backend FastAPI para consultar o catálogo CineData em português. Usa Pydantic AI e **openai/gpt-oss-120b via Groq**, com SQLite somente leitura. API e banco ficam locais; a inferência exige internet e chave Groq. Perguntas são independentes, sem memória.
 
-**Estado em 02/10/2026:** checkpoint do backend validado e revisão independente sem achados críticos ou importantes. A refatoração preserva os cenários originais e organiza 44 testes, com módulos separados para prompt e comparação. As 22 perguntas foram avaliadas: 21 aprovadas automaticamente e uma confirmada por revisão manual dos números, com formato de evidência diferente. Reprodução em ambiente limpo e demonstração HTTP real aprovadas. A estrutura refatorada aguarda revisão final antes da etapa de interface.
+**Estado em 02/10/2026:** backend e refatoração concluídos, com revisões independentes aprovadas. A refatoração preserva os cenários originais e organiza 44 testes, com módulos separados para prompt e comparação. As 22 perguntas foram avaliadas: 21 aprovadas automaticamente e uma confirmada por revisão manual dos números, com formato de evidência diferente. Reprodução em ambiente limpo e demonstração HTTP real aprovadas. Próxima etapa: discutir a interface.
 
 ## Preparar o ambiente
 
