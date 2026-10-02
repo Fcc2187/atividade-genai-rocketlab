@@ -4,6 +4,7 @@ import argparse
 import asyncio
 from dataclasses import asdict
 from datetime import date
+import hashlib
 import json
 import math
 import os
@@ -105,12 +106,14 @@ def select_cases(cases: list[dict], *, smoke: bool) -> list[dict]:
 async def evaluate(cases: list[dict], database: Path, timeout: float, output: Path, *, interval: float = 0):
     from app.agent import InvalidAgentResult, ProviderRateLimited, ProviderUnavailable, QuestionTimedOut, create_groq_model, responder
     from app.database import DatabaseUnavailable, QueryTimedOut
+    from pydantic_ai.exceptions import ModelHTTPError
     if os.getenv("MODEL_PROVIDER", "groq") != "groq":
         raise ValueError("Somente Groq está integrado.")
     name = os.getenv("MODEL_NAME", "openai/gpt-oss-120b")
     model, client = create_groq_model(os.getenv("MODEL_BASE_URL", "https://api.groq.com/openai/v1"),
                                       name, os.getenv("GROQ_API_KEY", ""))
     report = {"modelo":name, "provedor":"groq", "runtime_configurado":"Groq API",
+              "codigo_agente_sha256":hashlib.sha256((ROOT / "app" / "agent.py").read_bytes()).hexdigest(),
               "quantizacao_configurada":None, "contexto_configurado":None, "prazo_segundos":timeout,
               "intervalo_segundos":interval,
               "explicacoes":"Requerem revisão manual; acerto automático avalia status e linhas.", "casos":[]}
@@ -139,6 +142,16 @@ async def evaluate(cases: list[dict], database: Path, timeout: float, output: Pa
             except (ProviderUnavailable,ProviderRateLimited,QuestionTimedOut,InvalidAgentResult,DatabaseUnavailable,QueryTimedOut) as error:
                 item["veredito"], item["erro"] = "erro", type(error).__name__
                 item["diagnostico"] = str(error)
+                if isinstance(error.__cause__,ModelHTTPError):
+                    cause=error.__cause__
+                    body=cause.body if isinstance(cause.body,dict) else {}
+                    body=body.get('error',body)
+                    if isinstance(body,dict):
+                        key=os.getenv('GROQ_API_KEY','')
+                        message=str(body.get('message',''))
+                        if key: message=message.replace(key,'[REDACTED]')
+                        item['erro_provedor']={'status':cause.status_code,'codigo':str(body.get('code',''))[:100],
+                                              'mensagem':message[:1000]}
                 fatal = isinstance(error,(ProviderUnavailable,ProviderRateLimited,QuestionTimedOut,DatabaseUnavailable))
             item["segundos"] = time.monotonic()-start
             item["memoria_processo"] = None  # Inferência remota: memória do servidor não é medida aqui.

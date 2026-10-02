@@ -128,6 +128,8 @@ class AnalyticalTests(unittest.TestCase):
                 CREATE TABLE bridge_movie_genre (sk_movie_id TEXT, sk_genre_id TEXT, PRIMARY KEY(sk_movie_id,sk_genre_id));
                 CREATE TABLE dim_people (sk_person_id TEXT PRIMARY KEY, nome_pessoa TEXT, tipo_pessoa TEXT);
                 CREATE TABLE bridge_movie_person (sk_movie_id TEXT, sk_person_id TEXT, PRIMARY KEY(sk_movie_id,sk_person_id));
+                CREATE TABLE dim_companies (sk_company_id TEXT PRIMARY KEY, nome_produtora TEXT);
+                CREATE TABLE bridge_movie_company (sk_movie_id TEXT, sk_company_id TEXT, PRIMARY KEY(sk_movie_id,sk_company_id));
                 INSERT INTO dim_movies VALUES ('a','A','2021-09-30',2021), ('b','B','2026-09-30',2026), ('c','C','2026-10-01',2026), ('d','D','2021-09-29',2021), ('e','E','2026-09-29',2026);
                 INSERT INTO fact_movies_performance VALUES
                     ('a',100,40,60,500,200,300,8,7,10),
@@ -139,6 +141,8 @@ class AnalyticalTests(unittest.TestCase):
                 INSERT INTO bridge_movie_genre VALUES ('a','g1'), ('b','g1'), ('c','g1'), ('d','g1'), ('e','g1'), ('a','g2');
                 INSERT INTO dim_people VALUES ('p1','Diretor Cinco','Diretor'), ('p2','Diretor Quatro','Diretor'), ('p3','Ator A','Ator');
                 INSERT INTO bridge_movie_person VALUES ('a','p1'), ('b','p1'), ('c','p1'), ('d','p1'), ('e','p1'), ('a','p2'), ('b','p2'), ('c','p2'), ('d','p2'), ('a','p3'), ('b','p3'), ('c','p3'), ('d','p3'), ('e','p3');
+                INSERT INTO dim_companies VALUES ('c1','Produtora');
+                INSERT INTO bridge_movie_company VALUES ('a','c1'),('b','c1'),('c','c1'),('d','c1'),('e','c1');
             """)
         try:
             self.evaluation = importlib.import_module("evaluation.run")
@@ -160,9 +164,27 @@ class AnalyticalTests(unittest.TestCase):
     def test_lucro_e_margem_com_nulos(self):
         self.assertEqual(self.reference("03_maior_margem").linhas, [["a", "A", 60.0]])
         self.assertEqual(self.reference("12_margem_genero").linhas, [["g2", "Adventure", 60.0, 1], ["g1", "Action", 55.0, 2]])
+        self.assertEqual(self.reference("11_produtora_lucro").linhas, [["c1", "Produtora", 150.0, 3]])
+        from dataclasses import asdict
+        from app.database import QueryEvidence
+        for case_id, aliases, indices, metric in [('11_produtora_lucro', ['nome_produtora','total_lucro_usd','qtd_filmes'], [1,2,3], 1),
+                                                  ('11_produtora_lucro', ['nome_produtora','lucro_total_usd','qtd_filmes'], [1,2,3], 1),
+                                                  ('12_margem_genero', ['qtd_filmes','genero','margem_media'], [3,1,2], 2)]:
+            case = next(c for c in self.evaluation.load_cases() if c['id']==case_id)
+            reference = self.reference(case_id)
+            query = QueryEvidence('SQL equivalente', {}, aliases, [[r[i] for i in indices] for r in reference.linhas], False)
+            obtained = {'answer':{'status':'resultado'},'consultas':[asdict(query)]}
+            self.assertEqual(self.evaluation.grade(case,[reference],obtained),(True,True))
+            query.linhas[0][metric] += 1
+            obtained['consultas'] = [asdict(query)]
+            self.assertEqual(self.evaluation.grade(case,[reference],obtained),(True,False))
+        query = QueryEvidence('SQL sem amostra', {}, ['genero','margem_media'], [r[1:3] for r in reference.linhas], False)
+        obtained['consultas'] = [asdict(query)]
+        self.assertEqual(self.evaluation.grade(case,[reference],obtained),(True,False))
 
     def test_diretor_minimo_cinco_filmes(self):
         self.assertEqual(self.reference("08_diretor_nota").linhas, [["p1", "Diretor Cinco", 8.0, 5]])
+        self.assertEqual(self.reference("09_par_ator_diretor").linhas, [["p3", "Ator A", "p1", "Diretor Cinco", 5]])
 
     def test_datas_ano_e_janela_movel(self):
         self.assertEqual(self.reference("07_ator_cinco_anos").linhas, [["p3", "Ator A", 3]])
@@ -182,6 +204,9 @@ class AnalyticalTests(unittest.TestCase):
         self.assertFalse(compare(missing, expected, ordered=False, abs_tol=0.01, rel_tol=1e-9))
         truncated = QueryEvidence("outro sql", {}, expected.colunas, expected.linhas, True)
         self.assertFalse(compare(truncated, expected, ordered=True, abs_tol=0.01, rel_tol=1e-9))
+        precise = QueryEvidence('ref', {}, ['ano_lancamento','nota_media_imdb'], [[2026,6.338046141990175]], False)
+        rounded = QueryEvidence('SQL arredondado', {}, precise.colunas, [[2026,6.34]], False)
+        self.assertFalse(compare(rounded, precise, ordered=True, abs_tol=1e-6, rel_tol=1e-9))
 
     def test_comparador_colunas_relevantes_e_extras(self):
         from app.database import QueryEvidence
@@ -210,6 +235,9 @@ class AnalyticalTests(unittest.TestCase):
                               [['Diretor Cinco',5,8.0,0.0]], False)
         obtained['consultas'] = [asdict(query)]
         self.assertEqual(self.evaluation.grade(director,[reference],obtained), (True,True))
+        query.colunas[2] = 'media_nota_imdb'
+        obtained['consultas'] = [asdict(query)]
+        self.assertEqual(self.evaluation.grade(director,[reference],obtained), (True,True))
         query.linhas.append(['Outro Diretor',5,7.0,0.0])
         obtained['consultas'] = [asdict(query)]
         self.assertEqual(self.evaluation.grade(director,[reference],obtained), (True,False))
@@ -231,6 +259,15 @@ class AnalyticalTests(unittest.TestCase):
         query.linhas[0][2] += 1
         obtained['consultas'] = [asdict(query)]
         self.assertEqual(self.evaluation.grade(genre,[reference],obtained), (True,False))
+        coverage = next(c for c in self.evaluation.load_cases() if c['id'] == '19_cobertura')
+        reference = self.reference(coverage['id'])
+        query = QueryEvidence('SQL equivalente', {}, ['genero','media_imdb','qtd_com_nota','total_filmes','proporcao'],
+                              [[r[1],r[2],r[3],r[4],r[3]/r[4]] for r in reversed(reference.linhas)], False)
+        obtained['consultas'] = [asdict(query)]
+        self.assertEqual(self.evaluation.grade(coverage,[reference],obtained), (True,True))
+        query.linhas[0][2] += 1
+        obtained['consultas'] = [asdict(query)]
+        self.assertEqual(self.evaluation.grade(coverage,[reference],obtained), (True,False))
 
 
 class AgentTests(unittest.IsolatedAsyncioTestCase):
@@ -243,7 +280,7 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
 
     def model(self, steps):
         from pydantic_ai.models.function import FunctionModel
-        from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
+        from pydantic_ai.messages import ModelResponse, ToolCallPart
         from pydantic_ai.usage import RequestUsage
         self.calls = 0
 
@@ -256,7 +293,7 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
                 return await step(messages, info)
             name, args = step
             if name == "answer":
-                return ModelResponse([TextPart(json.dumps(args))], usage=RequestUsage(input_tokens=10, output_tokens=5))
+                name = info.output_tools[0].name
             return ModelResponse([ToolCallPart(name, args)], usage=RequestUsage(input_tokens=10, output_tokens=5))
         return FunctionModel(respond)
 
@@ -313,10 +350,10 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_estado_isolado_entre_perguntas(self):
         from pydantic_ai.models.function import FunctionModel
-        from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
+        from pydantic_ai.messages import ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
         async def respond(messages, info):
             if any(isinstance(part,ToolReturnPart) for m in messages for part in m.parts):
-                return ModelResponse([TextPart(json.dumps(self.answer()[1]))])
+                return ModelResponse([ToolCallPart(info.output_tools[0].name,self.answer()[1])])
             title=next(part.content for m in messages for part in m.parts if isinstance(part,UserPromptPart))
             return ModelResponse([ToolCallPart("consultar_sql",{"sql":"SELECT titulo FROM dim_movies WHERE titulo=:titulo","parametros":{"titulo":title}})])
         model=FunctionModel(respond)
@@ -401,7 +438,7 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
                     await task
                 self.assertTrue(finished.is_set())
 
-    async def test_adapter_valida_json_final_sem_exigir_tool_de_saida(self):
+    async def test_adapter_valida_ferramenta_e_texto_json_sem_forcar_groq(self):
         import httpx
         from openai import AsyncOpenAI
         from pydantic_ai.models.openai import OpenAIChatModel
@@ -411,6 +448,7 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         await real_client.close()
         requests=[]
         invalid=False
+        raw=False
         def transport(request):
             self.assertEqual(str(request.url),"https://api.groq.com/openai/v1/chat/completions")
             self.assertEqual(request.headers["authorization"],"Bearer gsk-test")
@@ -422,13 +460,24 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(body["max_completion_tokens"],2048)
             requests.append(body)
             if len(requests)==1:
+                self.assertEqual(body['messages'][0]['role'],'system')
+                policies='\n'.join(str(m.get('content','')) for m in body['messages'] if m['role'] in ('system','developer'))
+                self.assertIn('lucro acumulado filtra receita e orçamento não nulos',policies)
+                self.assertIn('Toda AVG calculada',policies)
+                sql_tool=next(t for t in body['tools'] if t['function']['name']=='consultar_sql')
+                self.assertIn('receita_usd IS NOT NULL',sql_tool['function']['description'])
+            if len(requests)==1:
                 message={"role":"assistant","tool_calls":[{"id":"sql","type":"function","function":{"name":"consultar_sql","arguments":json.dumps({"sql":"SELECT COUNT(*) AS filmes FROM dim_movies","parametros":{}})}}]}
                 reason="tool_calls"
             else:
-                if body["tool_choice"]=="required":
+                self.assertIn('consultar_sql',[t['function']['name'] for t in body['tools']])
+                if body["tool_choice"]!="auto":
                     return httpx.Response(400,json={"error":{"message":"Tool choice is required, but model did not call a tool","code":"tool_use_failed"}})
-                message={"role":"assistant","content":"{}" if invalid else json.dumps(self.answer()[1])}
-                reason="stop"
+                message={"role":"assistant","tool_calls":[{"id":"answer","type":"function","function":{"name":"json","arguments":"{}" if invalid else json.dumps(self.answer()[1])}}]}
+                reason="tool_calls"
+                if raw:
+                    message={"role":"assistant","content":"{}" if invalid else json.dumps(self.answer()[1])}
+                    reason="stop"
             return httpx.Response(200,json={"id":"mock","object":"chat.completion","created":0,"model":"openai/gpt-oss-120b",
                                            "choices":[{"index":0,"message":message,"finish_reason":reason}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}})
         client=AsyncOpenAI(base_url="https://api.groq.com/openai/v1",api_key="gsk-test",max_retries=0,
@@ -438,8 +487,13 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
             result=await self.agent.responder("Quantos filmes?",self.path,date(2026,9,30),model)
             self.assertEqual(result.answer.status,"resultado")
             self.assertEqual(len(requests),2)
-            self.assertTrue(all(body["tool_choice"]=="auto" for body in requests))
+            self.assertTrue(all(r['tool_choice']=='auto' for r in requests))
             self.assertTrue(all("response_format" not in body for body in requests))
+            requests.clear()
+            raw=True
+            result=await self.agent.responder("Quantos filmes?",self.path,date(2026,9,30),model)
+            self.assertEqual(result.answer.status,'resultado')
+            self.assertEqual(len(requests),2)
             requests.clear()
             invalid=True
             with self.assertRaises(self.agent.InvalidAgentResult):
@@ -541,7 +595,11 @@ class EvaluationTests(unittest.TestCase):
         result=QuestionResult(AgentAnswer(status="resultado",resposta="Dois filmes."),
                               [self.db.execute_readonly(self.path,case["referencias"][0]["sql"],{})],"simulado",
                               {"chamadas":2,"tokens_entrada":20,"tokens_saida":10,"tentativas_sql":1})
-        for outcome,expected in [(result,"correto"),(ProviderUnavailable("offline"),"erro")]:
+        from app.agent import InvalidAgentResult
+        from pydantic_ai.exceptions import ModelHTTPError
+        rejected=InvalidAgentResult('Resposta inválida.')
+        rejected.__cause__=ModelHTTPError(400,'openai/gpt-oss-120b',{'code':'tool_use_failed','message':'gsk-test','failed_generation':'privado'})
+        for outcome,expected in [(result,"correto"),(ProviderUnavailable("offline"),"erro"),(rejected,"erro")]:
             with patch.dict(os.environ,{"MODEL_PROVIDER":"groq","GROQ_API_KEY":"gsk-test","MODEL_RUNTIME":"Groq API"}),patch("evaluation.run.load_cases",return_value=[case]),patch("app.agent.create_groq_model",return_value=(object(),AsyncMock())):
                 with patch("app.agent.responder",new_callable=AsyncMock) as respond:
                     if isinstance(outcome,Exception):respond.side_effect=outcome
@@ -551,6 +609,9 @@ class EvaluationTests(unittest.TestCase):
                     self.assertEqual(report["runtime_configurado"],"Groq API")
                     self.assertEqual(report["casos"][0]["veredito"],expected)
                     self.assertLessEqual(respond.call_count,1)
+                    if outcome is rejected:
+                        self.assertEqual(report['casos'][0]['erro_provedor'],{'status':400,'codigo':'tool_use_failed','mensagem':'[REDACTED]'})
+                        self.assertNotIn('privado',json.dumps(report))
         with patch.dict(os.environ,{"MODEL_PROVIDER":"groq","GROQ_API_KEY":"gsk-test"}),patch("evaluation.run.load_cases",return_value=[case,case]),patch("app.agent.create_groq_model",return_value=(object(),AsyncMock())):
             with patch("app.agent.responder",new_callable=AsyncMock,return_value=result),patch("evaluation.run.asyncio.sleep",new_callable=AsyncMock) as pause:
                 self.evaluation.main(["--all","--interval","60","--database",str(self.path),"--output",str(output)])

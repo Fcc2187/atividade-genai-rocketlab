@@ -199,7 +199,7 @@
   },
   {
     "id": "08_diretor_nota",
-    "aliases": {"diretor": "nome_pessoa", "media_imdb": "nota_media_imdb", "qtd_filmes": "filmes_validos"},
+    "aliases": {"diretor": "nome_pessoa", "media_imdb": "nota_media_imdb", "media_nota_imdb": "nota_media_imdb", "qtd_filmes": "filmes_validos"},
     "categoria": "pessoas",
     "pergunta": "Qual diretor tem a maior média de notas de seus filmes, considerando pelo menos 5 filmes?",
     "data_referencia": "2026-09-30",
@@ -280,6 +280,7 @@
   },
   {
     "id": "11_produtora_lucro",
+    "aliases": {"total_lucro_usd": "lucro_acumulado_usd", "lucro_total_usd": "lucro_acumulado_usd", "qtd_filmes": "filmes_validos"},
     "categoria": "generos_produtoras",
     "pergunta": "Qual produtora tem o maior lucro acumulado?",
     "data_referencia": "2026-09-30",
@@ -309,6 +310,7 @@
   },
   {
     "id": "12_margem_genero",
+    "aliases": {"genero": "nome_genero", "margem_media": "margem_media_percentual", "qtd_filmes": "filmes_validos"},
     "categoria": "generos_produtoras",
     "pergunta": "Qual é a margem média de lucro por gênero?",
     "data_referencia": "2026-09-30",
@@ -461,6 +463,7 @@
   },
   {
     "id": "19_cobertura",
+    "aliases": {"genero": "nome_genero", "media_imdb": "nota_media_imdb", "qtd_com_nota": "filmes_validos", "total_filmes": "filmes_totais"},
     "categoria": "avaliacoes",
     "pergunta": "Qual a média IMDb por gênero e quantos filmes têm nota em relação ao total de cada gênero?",
     "data_referencia": "2026-09-30",
@@ -471,7 +474,7 @@
       15,
       19
     ],
-    "ordenado": true,
+    "ordenado": false,
     "abs_tol": 1e-06,
     "rel_tol": 1e-09,
     "referencias": [
