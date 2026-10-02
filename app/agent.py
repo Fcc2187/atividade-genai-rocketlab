@@ -46,8 +46,10 @@ class QuestionTimedOut(Exception):
 class AgentAnswer(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     status: Literal["resultado", "esclarecimento", "recusa", "sem_dados"]
-    resposta: str = Field(min_length=1, max_length=4000)
-    avisos: list[Annotated[StrictStr, Field(min_length=1, max_length=500)]] = Field(default_factory=list, max_length=10)
+    resposta: str = Field(min_length=1, max_length=4000,
+                          description="Resposta em português baseada nas evidências SQL. Em esclarecimento sem SQL, apenas pergunte o dado faltante; não afirme que existem registros ou homônimos no catálogo.")
+    avisos: list[Annotated[StrictStr, Field(min_length=1, max_length=500)]] = Field(max_length=10,
+                          description="Ressalvas e limitações em itens separados; use [] somente se não houver. Declare ano atual parcial em análises anuais. Não inclua seção de avisos em resposta.")
 
 
 @dataclass
@@ -70,6 +72,9 @@ class _State:
 RULES = """Você é um analista do catálogo CineData. Responda em português com status, resposta e avisos.
 Use consultar_sql para obter evidências; finalize chamando json ou retornando um único objeto JSON idêntico.
 Recusas e esclarecimentos usam o mesmo formato. Não escreva texto livre nem repita a resposta.
+Coloque ressalvas e limitações no array avisos; não crie seção de avisos dentro de resposta.
+Ao esclarecer sem consultar_sql, peça o dado faltante sem afirmar fatos do catálogo:
+um título ou nome pode ser ambíguo; não afirme que existem vários registros nem cite contagens sem evidência.
 Para fatos ou números do catálogo, execute consultar_sql antes de responder; nunca invente dados.
 Use SQLite SELECT/CTE, uma instrução, parâmetros nomeados para valores e aliases claros.
 O banco é somente leitura. Recuse escrita, shell, anexação, metadados técnicos e pedidos fora do catálogo.
@@ -198,6 +203,9 @@ async def responder(pergunta: str, database_path: Path, referencia: date, model:
                 Excluir datas futuras salvo pedido explícito; :referencia é a data fornecida nas instruções.
                 Rankings: métrica DESC, título/nome ASC, chave ASC; singular LIMIT 1.
                 Pares: direções AS MATERIALIZED, CROSS JOIN ponte por filme, agrupar chaves antes dos nomes.
+                Obrigatório usar CROSS JOIN entre direcoes e a ponte; JOIN comum pode reordenar e exceder 20s.
+                Na CTE pares não faça JOIN dim_people nem filtre Ator: filtre o papel no SELECT final,
+                depois do GROUP BY das chaves, conforme o exemplo completo das instruções.
                 """
                 async with ctx.deps.lock:
                     cancel = Event()
@@ -239,7 +247,7 @@ async def responder(pergunta: str, database_path: Path, referencia: date, model:
                 answer.avisos = (answer.avisos[:9] + ["Resultado truncado; a evidência não contém todo o conjunto."])
             reported = any(isinstance(message, ModelResponse) and message.usage.has_values() for message in result.all_messages())
     except QueryRejected:
-        answer = AgentAnswer(status="recusa", resposta="A operação solicitada não é permitida no banco somente leitura.")
+        answer = AgentAnswer(status="recusa", resposta="A operação solicitada não é permitida no banco somente leitura.", avisos=[])
         reported = bool(usage.input_tokens or usage.output_tokens)
     except (TimeoutError, QueryTimedOut, APITimeoutError) as error:
         raise QuestionTimedOut("Prazo da pergunta esgotado.") from error

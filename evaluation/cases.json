@@ -365,6 +365,7 @@
   },
   {
     "id": "14_usuarios_imdb",
+    "aliases": {"diff": "divergencia"},
     "categoria": "engajamento",
     "pergunta": "Quais filmes têm maior diferença entre nota média de usuários e nota IMDb?",
     "data_referencia": "2026-09-30",

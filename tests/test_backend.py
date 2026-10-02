@@ -268,6 +268,16 @@ class AnalyticalTests(unittest.TestCase):
         query.linhas[0][2] += 1
         obtained['consultas'] = [asdict(query)]
         self.assertEqual(self.evaluation.grade(coverage,[reference],obtained), (True,False))
+        reviews = next(c for c in self.evaluation.load_cases() if c['id'] == '14_usuarios_imdb')
+        reference = QueryEvidence('Referência', {}, ['sk_movie_id','titulo','nota_media_usuarios','nota_imdb','divergencia'],
+                                  [['m1','A',2.0,8.0,6.0]], False)
+        query = QueryEvidence('SQL equivalente', {}, ['titulo','id_filme','nota_media_usuarios','nota_imdb','diff'],
+                              [[r[1],'id externo',r[2],r[3],r[4]] for r in reference.linhas], False)
+        obtained['consultas'] = [asdict(query)]
+        self.assertEqual(self.evaluation.grade(reviews,[reference],obtained), (True,True))
+        query.linhas[0][-1] += 1
+        obtained['consultas'] = [asdict(query)]
+        self.assertEqual(self.evaluation.grade(reviews,[reference],obtained), (True,False))
 
 
 class AgentTests(unittest.IsolatedAsyncioTestCase):
@@ -449,6 +459,7 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         requests=[]
         invalid=False
         raw=False
+        missing_warnings=False
         def transport(request):
             self.assertEqual(str(request.url),"https://api.groq.com/openai/v1/chat/completions")
             self.assertEqual(request.headers["authorization"],"Bearer gsk-test")
@@ -460,6 +471,8 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(body["max_completion_tokens"],2048)
             requests.append(body)
             if len(requests)==1:
+                output_tool=next(t for t in body['tools'] if t['function']['name']=='json')
+                self.assertIn('avisos',output_tool['function']['parameters']['required'])
                 self.assertEqual(body['messages'][0]['role'],'system')
                 policies='\n'.join(str(m.get('content','')) for m in body['messages'] if m['role'] in ('system','developer'))
                 self.assertIn('lucro acumulado filtra receita e orçamento não nulos',policies)
@@ -473,10 +486,13 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn('consultar_sql',[t['function']['name'] for t in body['tools']])
                 if body["tool_choice"]!="auto":
                     return httpx.Response(400,json={"error":{"message":"Tool choice is required, but model did not call a tool","code":"tool_use_failed"}})
-                message={"role":"assistant","tool_calls":[{"id":"answer","type":"function","function":{"name":"json","arguments":"{}" if invalid else json.dumps(self.answer()[1])}}]}
+                answer=self.answer()[1]
+                if missing_warnings:
+                    del answer['avisos']
+                message={"role":"assistant","tool_calls":[{"id":"answer","type":"function","function":{"name":"json","arguments":"{}" if invalid else json.dumps(answer)}}]}
                 reason="tool_calls"
                 if raw:
-                    message={"role":"assistant","content":"{}" if invalid else json.dumps(self.answer()[1])}
+                    message={"role":"assistant","content":"{}" if invalid else json.dumps(answer)}
                     reason="stop"
             return httpx.Response(200,json={"id":"mock","object":"chat.completion","created":0,"model":"openai/gpt-oss-120b",
                                            "choices":[{"index":0,"message":message,"finish_reason":reason}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}})
@@ -495,6 +511,14 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result.answer.status,'resultado')
             self.assertEqual(len(requests),2)
             requests.clear()
+            missing_warnings=True
+            for raw in (False,True):
+                with self.subTest(raw=raw):
+                    with self.assertRaises(self.agent.InvalidAgentResult):
+                        await self.agent.responder("Quantos filmes?",self.path,date(2026,9,30),model)
+                    self.assertEqual(len(requests),2)
+                    requests.clear()
+            missing_warnings=False
             invalid=True
             with self.assertRaises(self.agent.InvalidAgentResult):
                 await self.agent.responder("Quantos filmes?",self.path,date(2026,9,30),model)
@@ -532,7 +556,7 @@ class HTTPTests(unittest.TestCase):
     def test_resposta_tem_evidencias_reais(self):
         from app.agent import AgentAnswer,QuestionResult
         evidence=self.db.execute_readonly(self.path,"SELECT COUNT(*) AS filmes FROM dim_movies",{})
-        result=QuestionResult(AgentAnswer(status="resultado",resposta="Há dois filmes."),[evidence],"openai/gpt-oss-120b",
+        result=QuestionResult(AgentAnswer(status="resultado",resposta="Há dois filmes.",avisos=[]),[evidence],"openai/gpt-oss-120b",
                               {"chamadas":2,"tokens_entrada":None,"tokens_saida":None,"tentativas_sql":1})
         with patch("app.main.responder",new_callable=AsyncMock,return_value=result) as respond,self.client() as client:
             response=client.post("/perguntas",json={"pergunta":"  Quantos filmes?  "})
@@ -592,7 +616,7 @@ class EvaluationTests(unittest.TestCase):
         case={"id":"fake","categoria":"financeiro","pergunta":"Quantos filmes?","data_referencia":"2026-09-30",
               "status_esperado":"resultado","regras":[],"referencias":[{"sql":"SELECT COUNT(*) AS filmes FROM dim_movies","parametros":{}}],
               "ordenado":True,"abs_tol":0,"rel_tol":0}
-        result=QuestionResult(AgentAnswer(status="resultado",resposta="Dois filmes."),
+        result=QuestionResult(AgentAnswer(status="resultado",resposta="Dois filmes.",avisos=[]),
                               [self.db.execute_readonly(self.path,case["referencias"][0]["sql"],{})],"simulado",
                               {"chamadas":2,"tokens_entrada":20,"tokens_saida":10,"tentativas_sql":1})
         from app.agent import InvalidAgentResult

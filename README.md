@@ -2,7 +2,7 @@
 
 Backend FastAPI para consultar o catálogo CineData em português. Usa Pydantic AI e **openai/gpt-oss-120b via Groq**, com SQLite somente leitura. API e banco ficam locais; a inferência exige internet e chave Groq. Perguntas são independentes, sem memória.
 
-**Estado em 01/10/2026:** Groq conectado e 29 testes automatizados aprovados. Avaliação real parcial: 16 casos aprovados em 20 executados; dois ainda não executados. A cota diária interrompeu a bateria. Há retestes e revisão final pendentes; o backend ainda não está concluído. Interface será discutida depois da validação.
+**Estado em 01/10/2026:** Groq conectado e 29 testes automatizados aprovados. As 22 perguntas foram avaliadas: 21 aprovadas automaticamente e uma confirmada por revisão manual dos números, com formato de evidência diferente. Reprodução HTTP e revisão final continuam pendentes. Interface será discutida depois do fechamento do backend.
 
 ## Preparar o ambiente
 
@@ -66,7 +66,7 @@ Na consulta de 01/10/2026, o plano gratuito publica 30 requisições/minuto, 100
 
 ## Proteção SQL
 
-Uma ferramenta de dados, `consultar_sql`, e resposta JSON com status, explicação e avisos. O modelo pode concluir pela ferramenta `json` (`ToolOutput`) ou por texto JSON; ambos são validados pelo mesmo contrato Pydantic. Até duas tentativas SQL e três chamadas permitem obter evidências e corrigir uma consulta inválida. O Groq não permite combinar modo JSON nativo com ferramentas nessa API; respostas inválidas são rejeitadas sem extrair conteúdo de erros e sem retry da saída. Banco estático aberto com `mode=ro&immutable=1`, após verificar ausência de WAL/journal pendente. Conexões fechadas após a consulta; cancelamento interrompe e aguarda o worker.
+Uma ferramenta de dados, `consultar_sql`, e resposta JSON com status, explicação e avisos. O modelo pode concluir pela ferramenta `json` (`ToolOutput`) ou por texto JSON; ambos são validados pelo mesmo contrato Pydantic, com `avisos` obrigatório, podendo ser vazio. Até duas tentativas SQL e três chamadas permitem obter evidências e corrigir uma consulta inválida. O Groq não permite combinar modo JSON nativo com ferramentas nessa API; respostas inválidas são rejeitadas sem extrair conteúdo de erros e sem retry da saída. Banco estático aberto com `mode=ro&immutable=1`, após verificar ausência de WAL/journal pendente. Conexões fechadas após a consulta; cancelamento interrompe e aguarda o worker.
 
 Autorização SQLite permite somente dez tabelas de negócio e funções analíticas aprovadas. Escrita, DDL, anexação, PRAGMAs do modelo e metadados técnicos são bloqueados. Uma instrução por chamada, com parâmetros vinculados.
 
@@ -93,9 +93,13 @@ Relatórios incrementais ficam em `runtime/`. Registram fatos/status, duração 
 
 As cinco categorias iniciais passaram na comparação de status/linhas: receita BRL 3,89 s; popularidade 2,25 s; ator na janela móvel 4,50 s; gêneros 2,42 s; avaliações de usuários 2,05 s. Soma de latências 15,11 s, sem contar os intervalos da cota. São medições desta bateria, não uma garantia de tempo ou correção geral.
 
-O consolidado ampliado usa a última execução de cada caso, inclusive falhas, e reúne versões diferentes do prompt e protocolo. Não é uma bateria completa da versão atual. Dos 20 executados, 16 têm status/linhas corretos; média anual incluiu futuros, pares ator/diretor excederam SQL20, comparação usuários/IMDb teve erro de ferramenta e a contagem por ano atingiu HTTP429 diário. Dois casos seguem sem execução. Os ajustes de período, pares e disponibilidade da ferramenta precisam de reteste real. Explicações também têm limitações: ressalvas podem aparecer no texto com `avisos` vazio e um esclarecimento afirmou ambiguidade sem consulta. Não tratar a aprovação automática como validação integral da explicação.
+O consolidado ampliado usa a última execução de cada caso, inclusive falhas, e reúne versões diferentes do prompt e protocolo. Não é uma bateria completa da versão atual. Todos os 22 casos foram avaliados: 21 aprovados automaticamente; a contagem de 2025/2026 foi confirmada manualmente (5 e 1 filmes), pois o SQL retornou anos em colunas e o gabarito usa linhas. O veredito automático desse caso permanece registrado como incorreto por formato; não foi convertido silenciosamente em acerto.
 
-No erro diário, o Groq informou 199483 de 200000 tokens usados e cerca de 24 minutos até permitir a solicitação seguinte. Esse diagnóstico não é saldo atual nem garantia de completar uma pergunta de duas chamadas após a espera. Retomar somente casos pendentes/afetados após cota suficiente.
+Os retestes corrigiram a inclusão de futuros na média anual e a consulta do par ator/diretor, que retornou Joe Anoa’i e Kevin Dunn, com 37 filmes. Os últimos testes de média anual, pares e margens levaram 14,28/31,72/16,83 segundos, incluindo uma pausa diagnóstica de 10 segundos entre chamadas para respeitar TPM. Essa espera pertence somente à avaliação local; a API não introduz pausa nem retry. Não usar esses tempos como latência normal ou garantia de desempenho.
+
+Explicações também foram revisadas: esclarecimentos pedem identificação sem afirmar homônimos como fato sem SQL. Permanece uma limitação de apresentação: a média anual declarou o ano parcial no texto, com `avisos` vazio. Aprovação nos casos avaliados não garante correção em qualquer pergunta futura.
+
+Foram observados bloqueios por tokens/dia e tokens/minuto, inclusive entre as duas chamadas de uma pergunta. Os diagnósticos registram a espera daquele instante; não são saldo atual nem garantia de completar uma pergunta após a espera. Uma chave válida e a disponibilidade da organização são necessárias para reproduzir a avaliação.
 
 ## Repositório
 
