@@ -1,8 +1,8 @@
 # CineData Analytics
 
-Backend FastAPI para consultar o catálogo CineData em português. Usa Pydantic AI e **openai/gpt-oss-120b via Groq**, com SQLite somente leitura. API e banco ficam locais; a inferência exige internet e chave Groq. Perguntas são independentes, sem memória.
+Aplicação local para consultar o catálogo CineData em português, com interface React e backend FastAPI. Usa Pydantic AI e **openai/gpt-oss-120b via Groq**, com SQLite somente leitura. Interface, API e banco ficam locais; a inferência exige internet e chave Groq. Perguntas são independentes, sem memória.
 
-**Estado em 02/10/2026:** backend e refatoração concluídos, com revisões independentes aprovadas. A refatoração preserva os cenários originais e organiza 44 testes, com módulos separados para prompt e comparação. As 22 perguntas foram avaliadas: 21 aprovadas automaticamente e uma confirmada por revisão manual dos números, com formato de evidência diferente. Reprodução em ambiente limpo e demonstração HTTP real aprovadas. Próxima etapa: discutir a interface.
+**Estado em 02/10/2026:** backend e refatoração concluídos, com revisões independentes aprovadas. A primeira interface inclui consultas, histórico da sessão, respostas, avisos, tabelas, evidências e exportação CSV. As 22 perguntas do backend foram avaliadas: 21 aprovadas automaticamente e uma confirmada por revisão manual dos números, com formato de evidência diferente. Essas medições do modelo são anteriores à interface; seus testes usam fixtures sintéticas, sem chamadas ao Groq.
 
 ## Preparar o ambiente
 
@@ -56,6 +56,49 @@ Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8000/perguntas' -ContentTy
 
 Erros: 422 para entrada inválida; 503 para banco/configuração/Groq indisponível ou cota excedida; 502 para resposta inválida/limite operacional; 504 para prazo. `detail` contém código e mensagem, sem chave ou detalhes internos. `cota_excedida` identifica HTTP429 recebido do Groq; a aplicação não repete automaticamente. Encerrar com `Ctrl+C`.
 
+## Interface web
+
+Instalar Node.js 22.16+ na linha 22, ou 24+, e npm. Versão usada nesta implementação: Node 22.16.0 / npm 10.9.2. Com o backend configurado acima, usar dois terminais na raiz:
+
+```powershell
+# Terminal 1 — backend, com .env e banco locais.
+.\.venv\Scripts\python.exe -X utf8 -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+
+# Terminal 2 — instalar pelo lockfile e iniciar a interface.
+cd frontend
+npm.cmd ci
+npm.cmd run dev
+```
+
+Abrir `http://127.0.0.1:5173`. Os comandos `npm.cmd` evitam o bloqueio de `npm.ps1` na política padrão do PowerShell; em outros terminais, usar `npm`. Encerrar cada servidor com `Ctrl+C`.
+
+React + TypeScript + Vite, com [plugin oficial Tailwind para Vite](https://tailwindcss.com/docs/installation/using-vite). `frontend/vite.config.ts` encaminha `/api/perguntas` e `/api/health` para o FastAPI em `127.0.0.1:8000`, removendo `/api`. O frontend envia apenas `{ "pergunta": "..." }`, sem conversa anterior. A chave Groq fica exclusivamente no `.env` do backend; não criar uma variável `VITE_*` para ela.
+
+Exemplos por categoria preenchem o campo; enviar é uma ação explícita. Limite de 2000 caracteres Unicode, tempo decorrido durante processamento e bloqueio de envio duplicado. A tela representa resultado, esclarecimento, ausência de dados, recusa e erros, sem progresso fictício nem retries automáticos. O indicador de banco verifica somente `/health`, sem garantir disponibilidade ou cota do Groq.
+
+Histórico fica na memória da aba e desaparece ao recarregar. No desktop, aparece na lateral; no mobile, o botão “Histórico” abre um drawer modal, com foco contido e fechamento por Escape. Revisitar respostas não chama o modelo; pedidos de esclarecimento permitem editar e enviar uma nova pergunta independente. A apresentação inicial dá lugar a uma tela de leitura após o envio, com o campo da próxima consulta abaixo das evidências. Cada consulta tem sua própria tabela, indicação de truncamento e detalhes expansíveis de SQL/parâmetros. Modelo e uso ficam em detalhes adicionais. A resposta é exibida como texto, sem executar HTML do modelo.
+
+Copiar usa a área de transferência do navegador; se a permissão falhar, a interface orienta copiar manualmente. Exportar gera um CSV por evidência com BOM UTF-8, vírgulas, aspas escapadas e linhas CRLF. Textos que poderiam virar fórmulas em planilhas recebem apóstrofo de proteção; números negativos continuam números. Valores nulos e textos vazios têm rótulos distintos na tela e viram células vazias no CSV. Exportações truncadas contêm somente os dados recebidos.
+
+SVG inline próprio e CSS animam três formas suaves nas bordas, com botão de pausa e versão estática para `prefers-reduced-motion`. O indicador de processamento é separado. Tipografia usa a família de sistema disponível; nenhuma fonte proprietária ou CDN é necessária. Layout responsivo, foco visível, navegação por teclado e tabelas com rolagem horizontal interna.
+
+Build e verificação, dentro de `frontend/`:
+
+```powershell
+npm.cmd run typecheck
+npm.cmd run lint
+npm.cmd run build
+npx.cmd playwright install chromium
+npm.cmd test
+# Ou todas as verificações após instalar o navegador:
+npm.cmd run verify
+
+# Conferir o build local, mantendo o backend em execução:
+npm.cmd run preview
+```
+
+Build gera `frontend/dist/`; preview abre `http://127.0.0.1:4173` com o mesmo proxy local. Preview é para conferir o build, não uma configuração de deploy público. Testes Playwright exercitam o cliente, CSV e os estados reais da interface em desktop e mobile emulado com fixtures do contrato; não precisam de chave, banco ou Groq. O navegador de testes é uma instalação separada. Teclado virtual, safe areas e sensação de toque ainda precisam ser confirmados em celular físico.
+
 ## Limites e dados enviados
 
 Até três chamadas de modelo e duas tentativas SQL por pergunta. Raciocínio `medium`, até 2048 tokens de geração por chamada, temperatura zero e ferramentas sequenciais. O limite de geração inclui raciocínio e passou nos cinco casos iniciais; a avaliação ampliada verifica casos maiores. Prazo total 600 segundos é um teto herdado da avaliação, não uma promessa de latência.
@@ -107,4 +150,4 @@ O ambiente limpo instalado exclusivamente por `requirements.txt` foi verificado 
 
 `app/main.py` expõe a API; `app/agent.py` executa o agente; `app/prompts.py` contém as instruções e seu builder; `app/database.py` protege a leitura SQLite. `evaluation/run.py` executa a CLI e grava relatórios; `evaluation/grading.py` compara evidências; `evaluation/cases.json` guarda os gabaritos.
 
-Os testes usam fixtures sintéticas em `tests/helpers.py` e se distribuem em `test_database.py`, `test_analytics.py`, `test_agent.py`, `test_groq_adapter.py`, `test_api.py` e `test_evaluation.py`. O comando de descoberta permanece o mesmo, sem dependências adicionais. README e guia de instalação são publicados; `.env`, `.venv`, banco, relatórios e documentos internos ficam excluídos do Git. Não há deploy público; frontend permanece para a etapa posterior.
+Os testes do backend usam fixtures sintéticas em `tests/helpers.py` e se distribuem em `test_database.py`, `test_analytics.py`, `test_agent.py`, `test_groq_adapter.py`, `test_api.py` e `test_evaluation.py`. O comando de descoberta permanece o mesmo, sem dependências Python adicionais. `frontend/src/` separa componentes, cliente HTTP, tipos, exportação CSV e estilos; `frontend/tests/` guarda fixtures e verificações Playwright. README e guia de instalação são publicados; `.env`, `.venv`, banco, relatórios, ferramentas locais e documentos internos ficam excluídos do Git. Não há deploy público.

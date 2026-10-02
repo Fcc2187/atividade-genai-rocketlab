@@ -14,3 +14,15 @@ __pycache__/
 /Atividade GenAI - RocketLab 26.2 Perfis vdev.docx.pdf
 /tutorial-openrouter.html
 /evaluation/RESULTADOS.md
+
+# Frontend gerado e ferramentas/documentos locais.
+node_modules/
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+frontend/inspiracao-visual/
+*.tsbuildinfo
+/.agents/
+/skills-lock.json
+/DESIGN-discord.md
+/.superpowers/
