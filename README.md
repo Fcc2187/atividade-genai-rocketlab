@@ -2,7 +2,7 @@
 
 Backend FastAPI para consultar o catálogo CineData em português. Usa Pydantic AI e **openai/gpt-oss-120b via Groq**, com SQLite somente leitura. API e banco ficam locais; a inferência exige internet e chave Groq. Perguntas são independentes, sem memória.
 
-**Estado em 02/10/2026:** checkpoint do backend validado, com 29 testes aprovados e revisão independente sem achados críticos ou importantes. As 22 perguntas foram avaliadas: 21 aprovadas automaticamente e uma confirmada por revisão manual dos números, com formato de evidência diferente. Reprodução em ambiente limpo e demonstração HTTP real aprovadas. A refatoração estrutural segue antes da etapa de interface.
+**Estado em 02/10/2026:** checkpoint do backend validado e revisão independente sem achados críticos ou importantes. A refatoração preserva os cenários originais e organiza 44 testes, com módulos separados para prompt e comparação. As 22 perguntas foram avaliadas: 21 aprovadas automaticamente e uma confirmada por revisão manual dos números, com formato de evidência diferente. Reprodução em ambiente limpo e demonstração HTTP real aprovadas. A estrutura refatorada aguarda revisão final antes da etapa de interface.
 
 ## Preparar o ambiente
 
@@ -89,7 +89,7 @@ Limites: 20 segundos por SQL, 100 linhas, 10000 caracteres de SQL, 50 parâmetro
 
 `evaluation/cases.json` contém 14 exemplos do enunciado e oito complementares associados às 20 regras, com data fixa 30/09/2026. `--smoke` seleciona cinco categorias; `--all` inclui os 22 casos. `--interval 60` espera 60 segundos entre perguntas; essa espera não entra na duração de cada resposta. Não há retry automático ou espera dentro da API. Ajustar o intervalo à cota da organização; perguntas maiores ainda podem atingir HTTP429.
 
-Relatórios incrementais ficam em `runtime/`. Registram fatos/status, duração e uso; memória e quantização do servidor remoto não são medidas. Erro de cota, indisponibilidade ou prazo interrompe a bateria. Comparação admite SQL diferente, colunas extras e aliases declarados, sem aceitar truncamento ou métricas erradas. Contagens e identificadores são exatos; tolerâncias financeiras 0,01 e notas/margens 0,000001. Explicações e motivos de recusa/esclarecimento exigem revisão manual.
+Relatórios incrementais ficam em `runtime/`. Registram fatos/status, duração e uso; memória e quantização do servidor remoto não são medidas. `codigo_agente_sha256` identifica o código do agente e `codigo_prompts_sha256` identifica o módulo de instruções; relatórios anteriores à extração do prompt mantêm o formato original. Erro de cota, indisponibilidade ou prazo interrompe a bateria. Comparação admite SQL diferente, colunas extras e aliases declarados, sem aceitar truncamento ou métricas erradas. Contagens e identificadores são exatos; tolerâncias financeiras 0,01 e notas/margens 0,000001. Explicações e motivos de recusa/esclarecimento exigem revisão manual.
 
 As cinco categorias iniciais passaram na comparação de status/linhas: receita BRL 3,89 s; popularidade 2,25 s; ator na janela móvel 4,50 s; gêneros 2,42 s; avaliações de usuários 2,05 s. Soma de latências 15,11 s, sem contar os intervalos da cota. São medições desta bateria, não uma garantia de tempo ou correção geral.
 
@@ -101,8 +101,10 @@ Explicações também foram revisadas: esclarecimentos pedem identificação sem
 
 Foram observados bloqueios por tokens/dia e tokens/minuto, inclusive entre as duas chamadas de uma pergunta. Os diagnósticos registram a espera daquele instante; não são saldo atual nem garantia de completar uma pergunta após a espera. Uma chave válida e a disponibilidade da organização são necessárias para reproduzir a avaliação.
 
-O ambiente limpo instalado exclusivamente por `requirements.txt` passou nos 29 testes. `/health`, `/docs` e uma pergunta real por HTTP retornaram 200; a contagem dos 95.645 filmes levou 1,92 s, com duas chamadas ao Groq e uma SQL, sem pausa diagnóstica. O servidor de demonstração foi encerrado e o hash do SQLite permaneceu igual ao original.
+O ambiente limpo instalado exclusivamente por `requirements.txt` foi verificado novamente com os testes reorganizados. Na demonstração do backend, `/health`, `/docs` e uma pergunta real por HTTP retornaram 200; a contagem dos 95.645 filmes levou 1,92 s, com duas chamadas ao Groq e uma SQL, sem pausa diagnóstica. A refatoração manteve instruções e ferramenta SQL idênticas e não repetiu essa chamada à nuvem. O servidor de demonstração foi encerrado e o hash do SQLite permaneceu igual ao original.
 
 ## Repositório
 
-Código em `app/`, avaliação em `evaluation/`, testes em `tests/`. README e guia de instalação são publicados. `.env`, `.venv`, banco, relatórios e documentos internos ficam excluídos do Git. Não há deploy público; frontend permanece para a etapa posterior.
+`app/main.py` expõe a API; `app/agent.py` executa o agente; `app/prompts.py` contém as instruções e seu builder; `app/database.py` protege a leitura SQLite. `evaluation/run.py` executa a CLI e grava relatórios; `evaluation/grading.py` compara evidências; `evaluation/cases.json` guarda os gabaritos.
+
+Os testes usam fixtures sintéticas em `tests/helpers.py` e se distribuem em `test_database.py`, `test_analytics.py`, `test_agent.py`, `test_groq_adapter.py`, `test_api.py` e `test_evaluation.py`. O comando de descoberta permanece o mesmo, sem dependências adicionais. README e guia de instalação são publicados; `.env`, `.venv`, banco, relatórios e documentos internos ficam excluídos do Git. Não há deploy público; frontend permanece para a etapa posterior.
