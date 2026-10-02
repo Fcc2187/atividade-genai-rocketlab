@@ -2,7 +2,7 @@
 
 Backend FastAPI para consultar o catálogo CineData em português. Usa Pydantic AI e **openai/gpt-oss-120b via Groq**, com SQLite somente leitura. API e banco ficam locais; a inferência exige internet e chave Groq. Perguntas são independentes, sem memória.
 
-**Estado em 01/10/2026:** Groq conectado e 29 testes automatizados aprovados. As 22 perguntas foram avaliadas: 21 aprovadas automaticamente e uma confirmada por revisão manual dos números, com formato de evidência diferente. Reprodução HTTP e revisão final continuam pendentes. Interface será discutida depois do fechamento do backend.
+**Estado em 01/10/2026:** Groq conectado e 29 testes automatizados aprovados. As 22 perguntas foram avaliadas: 21 aprovadas automaticamente e uma confirmada por revisão manual dos números, com formato de evidência diferente. Reprodução em ambiente limpo e demonstração HTTP real aprovadas; revisão final em andamento. Interface será discutida depois do fechamento do backend.
 
 ## Preparar o ambiente
 
@@ -100,6 +100,8 @@ Os retestes corrigiram a inclusão de futuros na média anual e a consulta do pa
 Explicações também foram revisadas: esclarecimentos pedem identificação sem afirmar homônimos como fato sem SQL. Permanece uma limitação de apresentação: a média anual declarou o ano parcial no texto, com `avisos` vazio. Aprovação nos casos avaliados não garante correção em qualquer pergunta futura.
 
 Foram observados bloqueios por tokens/dia e tokens/minuto, inclusive entre as duas chamadas de uma pergunta. Os diagnósticos registram a espera daquele instante; não são saldo atual nem garantia de completar uma pergunta após a espera. Uma chave válida e a disponibilidade da organização são necessárias para reproduzir a avaliação.
+
+O ambiente limpo instalado exclusivamente por `requirements.txt` passou nos 29 testes. `/health`, `/docs` e uma pergunta real por HTTP retornaram 200; a contagem dos 95.645 filmes levou 1,92 s, com duas chamadas ao Groq e uma SQL, sem pausa diagnóstica. O servidor de demonstração foi encerrado e o hash do SQLite permaneceu igual ao original.
 
 ## Repositório
 
