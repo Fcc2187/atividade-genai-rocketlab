@@ -92,5 +92,9 @@ def build_instructions(schema: str, referencia: date) -> str:
               "Confira período e quantidade solicitados antes de executar. "
               "Checklist obrigatório antes de consultar_sql: lucro acumulado filtra receita e orçamento não nulos; "
               "médias retornam também a contagem válida; rankings desempatam por título/nome e depois chave. "
+              "Listas de filmes devem selecionar sk_movie_id, titulo, ano_lancamento e url_poster "
+              "quando esses campos existirem no esquema, mesmo que a pergunta peça somente a métrica. "
+              "Antes de executar o SQL, confira esses quatro campos no SELECT; não basta título e receita. "
+              "Esse checklist de filmes não se aplica a agregações por gênero, ano, pessoa ou produtora. "
               "Pares começam na CTE de direções AS MATERIALIZED e agrupam chaves antes dos nomes. "
               f"Se agrupar por ano e incluir {referencia.year}, escreva em avisos que esse ano é parcial.")
