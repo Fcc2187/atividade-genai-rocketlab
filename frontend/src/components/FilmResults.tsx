@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { Evidence, SQLValue } from '../types'
+import { getFilmColumns } from '../resultPresentation'
 
 function Poster({ url, title }: { url: SQLValue; title: string }) {
   const [failed, setFailed] = useState(false)
@@ -19,14 +20,10 @@ function metric(value: SQLValue, column: string, compact = false): string {
 }
 export default function FilmResults({ evidence, index = 1 }: { evidence: Evidence; index?: number }) {
   const columns = evidence.colunas.map(column => column.trim().toLowerCase())
-  const find = (aliases: string[]) => columns.findIndex(column => aliases.includes(column))
-  const titleIndex = find(['titulo', 'titulo_filme', 'filme'])
-  const yearIndex = find(['ano_lancamento', 'ano'])
-  const posterIndex = find(['url_poster', 'poster'])
-  const idIndex = find(['sk_movie_id', 'id_filme'])
-  if (titleIndex < 0 || (yearIndex < 0 && posterIndex < 0 && idIndex < 0) || evidence.linhas.length === 0) return null
-  const rows = evidence.linhas.filter(row => typeof row[titleIndex] === 'string' && row[titleIndex] !== '')
-  if (!rows.length) return null
+  const film = getFilmColumns(evidence)
+  if (!film) return null
+  const { title: titleIndex, year: yearIndex, poster: posterIndex, id: idIndex } = film
+  const rows = evidence.linhas
   const metrics = columns.map((column, i) => ({ column, i })).filter(({ column, i }) => ![titleIndex, yearIndex, posterIndex, idIndex].includes(i) && column !== 'url_backdrop')
   return <div className="film-results">
     <div className="film-heading" aria-hidden="true"><span>#</span><span>FILME / PÔSTER</span><span>{metrics.length === 1 ? evidence.colunas[metrics[0].i].replaceAll('_', ' ').toUpperCase() : 'DADOS DO FILME'}</span></div>

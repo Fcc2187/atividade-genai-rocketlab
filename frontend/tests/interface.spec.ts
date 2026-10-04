@@ -113,6 +113,61 @@ test.describe('historico e acessibilidade', () => {
 })
 
 test.describe('filmes e evidencias', () => {
+  test('mostra título e receita sem metadados', async ({ page }) => {
+    const answer = { ...rankingAnswer, consultas: [{ ...rankingAnswer.consultas[0], colunas: ['titulo', 'receita_usd'], linhas: [['Avatar', 2920000000]] }] }
+    await page.route('**/api/perguntas', route => route.fulfill({ json: answer }))
+    await page.goto('/')
+    await page.getByRole('textbox', { name: 'Sua pergunta' }).fill('Bilheteria')
+    await page.getByRole('button', { name: 'Consultar →' }).click()
+    const result = page.getByRole('region', { name: 'Resultado da consulta', exact: true })
+    await expect(result.getByRole('table')).toBeVisible()
+    await expect(result.getByRole('cell', { name: 'Avatar', exact: true })).toBeVisible()
+    await expect(result.getByRole('cell', { name: '2920000000', exact: true })).toBeVisible()
+    await expect(page.locator('.evidence-disclosure')).not.toHaveAttribute('open', '')
+  })
+
+  test('mostra agregações no resultado', async ({ page }) => {
+    await page.route('**/api/perguntas', route => route.fulfill({ json: aggregateAnswer }))
+    await page.goto('/')
+    await page.getByRole('textbox', { name: 'Sua pergunta' }).fill('Gêneros')
+    await page.getByRole('button', { name: 'Consultar →' }).click()
+    const table = page.getByRole('region', { name: 'Resultado da consulta', exact: true }).getByRole('table')
+    await expect(table.getByRole('row').nth(1)).toHaveText('Drama42')
+  })
+
+  test('preserva várias consultas em seções separadas e na ordem recebida', async ({ page }) => {
+    const answer = { ...aggregateAnswer, consultas: [aggregateAnswer.consultas[0], rankingAnswer.consultas[0]] }
+    await page.route('**/api/perguntas', route => route.fulfill({ json: answer }))
+    await page.goto('/')
+    await page.getByRole('textbox', { name: 'Sua pergunta' }).fill('Comparação')
+    await page.getByRole('button', { name: 'Consultar →' }).click()
+    const result = page.getByRole('region', { name: 'Resultado da consulta', exact: true })
+    await expect(result.getByRole('region', { name: 'Dados da consulta 1', exact: true }).getByRole('table')).toBeVisible()
+    await expect(result.getByRole('region', { name: 'Dados da consulta 2', exact: true }).getByRole('list')).toBeVisible()
+    await expect(result.locator('.query-result > h3')).toHaveText(['Dados da consulta 1', 'Dados da consulta 2'])
+  })
+
+  test('linhas com título ausente permanecem na tabela', async ({ page }) => {
+    const answer = { ...rankingAnswer, consultas: [{ ...rankingAnswer.consultas[0], linhas: [['Avatar', 2009, null, 42], [null, 2010, null, 7], ['', 2011, null, 0]] }] }
+    await page.route('**/api/perguntas', route => route.fulfill({ json: answer }))
+    await page.goto('/')
+    await page.getByRole('textbox', { name: 'Sua pergunta' }).fill('Filmes')
+    await page.getByRole('button', { name: 'Consultar →' }).click()
+    const table = page.getByRole('region', { name: 'Resultado da consulta', exact: true }).getByRole('table')
+    await expect(table.getByRole('row')).toHaveCount(4)
+    await expect(table.getByRole('row').nth(3)).toContainText('Texto vazio')
+  })
+
+  test('esclarecimento apresenta evidências como contexto e conserva tabela vazia', async ({ page }) => {
+    await page.route('**/api/perguntas', route => route.fulfill({ json: { ...rankingAnswer, status: 'esclarecimento', consultas: [rankingAnswer.consultas[0], { ...aggregateAnswer.consultas[0], linhas: [] }] } }))
+    await page.goto('/')
+    await page.getByRole('textbox', { name: 'Sua pergunta' }).fill('Home')
+    await page.getByRole('button', { name: 'Consultar →' }).click()
+    const result = page.getByRole('region', { name: 'Resultado da consulta', exact: true })
+    await expect(result.getByRole('table')).toHaveCount(2)
+    await expect(result.getByRole('list', { name: /Filmes da consulta/ })).toHaveCount(0)
+    await expect(result.getByText('Nenhuma linha recebida nesta consulta.', { exact: true })).toBeVisible()
+  })
   test('mantém a métrica legível em mobile com valor completo acessível', async ({ page }) => {
     await page.setViewportSize({ width: 320, height: 812 })
     await page.route('**/api/perguntas', route => route.fulfill({ json: rankingAnswer }))
@@ -148,7 +203,7 @@ test.describe('filmes e evidencias', () => {
     await page.getByRole('button', { name: 'Consultar →' }).click()
     await expect(page.getByRole('list', { name: /Filmes da consulta/ })).toHaveCount(0)
     await page.getByText('Ver SQL e dados', { exact: true }).click()
-    const table = page.getByRole('table')
+    const table = page.getByRole('region', { name: 'Evidência da consulta 1' }).getByRole('table')
     await expect(table.getByText('Drama', { exact: true })).toBeVisible()
     await expect(table.getByText('Não informado', { exact: true })).toBeVisible()
     await expect(table.getByText('Texto vazio', { exact: true })).toBeVisible()
@@ -162,7 +217,7 @@ test.describe('exportacao e copia', () => {
     await page.getByRole('textbox', { name: 'Sua pergunta' }).fill('Gêneros')
     await page.getByRole('button', { name: 'Consultar →' }).click()
     await page.getByText('Ver SQL e dados', { exact: true }).click()
-    await expect(page.getByRole('table')).toHaveCount(2)
+    await expect(page.locator('.evidence-content').getByRole('table')).toHaveCount(2)
     const downloaded = page.waitForEvent('download')
     await page.getByRole('button', { name: 'Exportar CSV da consulta 2' }).click()
     const download = await downloaded
