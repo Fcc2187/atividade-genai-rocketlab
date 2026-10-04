@@ -16,6 +16,22 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         prepare_database(self)
         self.agent = agent
 
+    def test_aviso_ano_atual_parcial_quando_sql_limita_referencia(self):
+        from datetime import date
+        from app.database import QueryEvidence
+        answer = agent.AgentAnswer(status="resultado", resposta="2025 e 2026", avisos=[])
+        consultas = [QueryEvidence("SELECT ano_lancamento FROM dim_movies WHERE data_lancamento<=:referencia", {"referencia":"2026-09-30"}, ["ano_lancamento"], [[2026]], False)]
+        adjusted = agent.ensure_partial_year_warning(answer, "Quantos filmes foram lançados em 2025 e em 2026 até hoje?", consultas, date(2026,9,30))
+        self.assertIn("2026 é parcial", adjusted.avisos[0])
+
+    def test_nao_avisa_futuro_explicitamente_solicitado(self):
+        from datetime import date
+        from app.database import QueryEvidence
+        answer = agent.AgentAnswer(status="resultado", resposta="3 filmes", avisos=[])
+        consultas = [QueryEvidence("SELECT COUNT(*) FROM dim_movies WHERE data_lancamento>:referencia", {"referencia":"2026-09-30"}, ["filmes"], [[3]], False)]
+        adjusted = agent.ensure_partial_year_warning(answer, "Quantos filmes têm lançamento futuro, depois de hoje?", consultas, date(2026,9,30))
+        self.assertEqual(adjusted.avisos, [])
+
     def model(self, steps):
         from pydantic_ai.models.function import FunctionModel
         from pydantic_ai.messages import ModelResponse, ToolCallPart

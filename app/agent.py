@@ -70,6 +70,24 @@ class _State:
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
+def ensure_partial_year_warning(answer: AgentAnswer, pergunta: str,
+                                consultas: list[QueryEvidence], referencia: date) -> AgentAnswer:
+    """Guarantee the declared caveat when SQL bounds an annual query by the reference date."""
+    if answer.status != "resultado" or str(referencia.year) not in pergunta:
+        return answer
+    lowered = pergunta.casefold()
+    if re.search(r"futur|depois de hoje|posterior", lowered):
+        return answer
+    bounded = any(
+        re.search(r"data_lancamento\s*<=\s*:referencia", item.sql, re.I)
+        and re.search(r"ano_lancamento|strftime\s*\(", item.sql, re.I)
+        for item in consultas
+    )
+    if bounded and not any("parcial" in warning.casefold() for warning in answer.avisos):
+        answer.avisos = answer.avisos[:9] + [f"{referencia.year} é parcial até {referencia.isoformat()}; o ano ainda não terminou."]
+    return answer
+
+
 
 
 def create_groq_model(base_url: str, name: str, api_key: str) -> tuple[OpenAIChatModel, AsyncOpenAI]:
@@ -169,6 +187,7 @@ async def responder(pergunta: str, database_path: Path, referencia: date, model:
                 raise InvalidAgentResult("Sem dados incompatível com as evidências.")
             if any(item.truncado for item in state.consultas):
                 answer.avisos = (answer.avisos[:9] + ["Resultado truncado; a evidência não contém todo o conjunto."])
+            answer = ensure_partial_year_warning(answer, pergunta, state.consultas, referencia)
             reported = any(isinstance(message, ModelResponse) and message.usage.has_values() for message in result.all_messages())
     except QueryRejected:
         answer = AgentAnswer(status="recusa", resposta="A operação solicitada não é permitida no banco somente leitura.", avisos=[])
