@@ -122,7 +122,7 @@ test.describe('filmes e evidencias', () => {
     const result = page.getByRole('region', { name: 'Resultado da consulta', exact: true })
     await expect(result.getByRole('table')).toBeVisible()
     await expect(result.getByRole('cell', { name: 'Avatar', exact: true })).toBeVisible()
-    await expect(result.getByRole('cell', { name: '2920000000', exact: true })).toBeVisible()
+    await expect(result.getByRole('cell', { name: /2\.920\.000\.000,00/ })).toBeVisible()
     await expect(page.locator('.evidence-disclosure')).not.toHaveAttribute('open', '')
   })
 
@@ -211,6 +211,44 @@ test.describe('filmes e evidencias', () => {
 })
 
 test.describe('exportacao e copia', () => {
+  test('CSV e truncamento ficam disponíveis sem abrir SQL e não fazem novo POST', async ({ page }) => {
+    let calls = 0
+    const answer = { ...aggregateAnswer, avisos: [], consultas: [{ ...aggregateAnswer.consultas[0], linhas: [['Drama', 42]], truncado: true }] }
+    await page.route('**/api/perguntas', route => { calls++; return route.fulfill({ json: answer }) })
+    await page.goto('/')
+    await page.getByRole('textbox', { name: 'Sua pergunta' }).fill('Gêneros')
+    await page.getByRole('button', { name: 'Consultar →' }).click()
+    const result = page.getByRole('region', { name: 'Resultado da consulta', exact: true })
+    await expect(result.locator('.warnings')).toContainText('Consulta 1')
+    expect(await result.evaluate(element => Boolean(element.querySelector('.warnings')!.compareDocumentPosition(element.querySelector('.query-result')!) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true)
+    const csv = page.getByRole('button', { name: 'Exportar CSV da consulta 1' })
+    await expect(csv).toBeVisible()
+    const downloaded = page.waitForEvent('download')
+    await csv.click()
+    const download = await downloaded
+    expect(download.suggestedFilename()).toBe('cinedata-consulta-1-truncada.csv')
+    const stream = await download.createReadStream()
+    const chunks: Buffer[] = []
+    for await (const chunk of stream!) chunks.push(Buffer.from(chunk))
+    expect(Buffer.concat(chunks).toString('utf8')).toBe('\uFEFFgenero,total\r\nDrama,42\r\n')
+    await page.getByRole('button', { name: 'Copiar resposta' }).click()
+    await page.getByText('Ver SQL e dados', { exact: true }).click()
+    await expect(csv).toHaveCount(1)
+    expect(calls).toBe(1)
+  })
+
+  test('apresentação formata valores mas evidências e CSV conservam precisão', async ({ page }) => {
+    const answer = { ...aggregateAnswer, consultas: [{ ...aggregateAnswer.consultas[0], colunas: ['ano_lancamento', 'nota_imdb', 'margem_percentual'], linhas: [[2009, 7.123456789, 60]] }] }
+    await page.route('**/api/perguntas', route => route.fulfill({ json: answer }))
+    await page.goto('/')
+    await page.getByRole('textbox', { name: 'Sua pergunta' }).fill('Notas')
+    await page.getByRole('button', { name: 'Consultar →' }).click()
+    const table = page.getByRole('region', { name: 'Resultado da consulta', exact: true }).getByRole('table')
+    await expect(table.getByRole('row').nth(1)).toHaveText('20097,1260%')
+    await page.getByText('Ver SQL e dados', { exact: true }).click()
+    const original = page.getByRole('region', { name: 'Evidência da consulta 1' }).getByRole('table')
+    await expect(original.getByRole('row').nth(1)).toHaveText('20097.12345678960')
+  })
   test('exporta cada evidência com truncamento e só os dados recebidos', async ({ page }) => {
     await page.route('**/api/perguntas', route => route.fulfill({ json: { ...aggregateAnswer, consultas: [aggregateAnswer.consultas[0], { ...aggregateAnswer.consultas[0], linhas: [['Drama', 42]], truncado: true }] } }))
     await page.goto('/')
@@ -240,8 +278,9 @@ test.describe('exportacao e copia', () => {
     await page.getByRole('textbox', { name: 'Sua pergunta' }).fill('Avatar')
     await page.getByRole('button', { name: 'Consultar →' }).click()
     await page.getByRole('button', { name: 'Copiar resposta' }).click()
-    await expect(page.getByRole('status')).toContainText(fails ? 'Selecione o texto' : 'Resposta copiada')
-    expect((await page.getByRole('status').boundingBox())?.height).toBeGreaterThan(8)
+    const copyFeedback = page.getByRole('status', { name: 'Feedback de cópia' })
+    await expect(copyFeedback).toContainText(fails ? 'Selecione o texto' : 'Resposta copiada')
+    expect((await copyFeedback.boundingBox())?.height).toBeGreaterThan(8)
     if (!fails) expect(await page.evaluate(() => (window as Window & { copiedText?: string }).copiedText)).toBe(rankingAnswer.resposta)
     await expect(page.getByText(rankingAnswer.resposta, { exact: true })).toBeVisible()
   })

@@ -70,6 +70,8 @@ dd { margin: 0; }
 .query-result > h3 { font-size: 1rem; }
 .query-result .film-heading, .query-result .film-row { padding-inline: 0; }
 .result-actions button { min-width: 192px; }
+.result-actions { align-items: flex-start; }
+.csv-export { min-width: 0; display: flex; flex-direction: column; gap: 12px; }
 .film-heading { display: grid; grid-template-columns: 28px 1fr minmax(180px, 276px); gap: 24px; padding: 24px; background: var(--paper); color: var(--muted); font-size: .875rem; font-weight: 600; }
 .film-heading span:last-child { text-align: right; }
 .film-list { margin: 0; padding: 0; list-style: none; }

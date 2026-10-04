@@ -1,6 +1,21 @@
 import { test, expect } from '@playwright/test'
 import { rankingAnswer, statusAnswers } from './fixtures'
 
+test('formata unidades explícitas sem presumir moeda ou perder valores originais', async () => {
+  const { formatValue, columnLabel } = await import('../src/valueFormatting')
+  for (const [value, column, expected] of [
+    [1234.5, 'receita_usd', 'US$ 1.234,50'], [1234.5, 'receita_brl', 'R$ 1.234,50'],
+    [60, 'margem_percentual', '60%'], [60.12345, 'margem_media_percentual', '60,12%'],
+    [2009, 'ano_lancamento', '2009'], [2009, 'id_filme', '2009'],
+    [0, 'filmes_validos', '0'], [null, 'receita_usd', 'Não informado'], ['', 'titulo', 'Texto vazio'],
+    [7.123456, 'nota_imdb', '7,12'], [1000.123456789, 'misterio', '1.000,123456789'],
+    [42, 'receita_sem_unidade', '42'], [42, 'bilheteria_brl', 'R$ 42,00'],
+  ] as const) expect(formatValue(value, column).replaceAll('\u00a0', ' ')).toBe(expected)
+  expect(columnLabel('receita_usd')).toBe('Receita (USD)')
+  expect(columnLabel('margem_media_percentual')).toBe('Margem média (%)')
+  expect(columnLabel('coluna_desconhecida')).toBe('coluna desconhecida')
+})
+
 test.describe('contrato da consulta', () => {
   test('valida trim e pontos de código Unicode nos limites', async () => {
     const { normalizeQuestion } = await import('../src/api')
