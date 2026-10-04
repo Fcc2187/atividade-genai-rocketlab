@@ -7,7 +7,7 @@ import ResultTable from './ResultTable'
 import CsvExportButton from './CsvExportButton'
 
 const titles = { resultado: 'Resposta do catálogo', esclarecimento: 'Esclarecimento', recusa: 'Recusa', sem_dados: 'Sem dados' }
-export default function Result({ answer, onFeedback }: { answer: Answer; onFeedback: (message: string) => void }) {
+export default function Result({ answer, onFeedback, onReformulate, onNewQuestion }: { answer: Answer; onFeedback: (message: string) => void; onReformulate: () => void; onNewQuestion: () => void }) {
   const [copyFeedback, setCopyFeedback] = useState<{ message: string; sequence: number }>({ message: '', sequence: 0 })
   async function copy() {
     let message: string
@@ -21,6 +21,9 @@ export default function Result({ answer, onFeedback }: { answer: Answer; onFeedb
     <div className="result-intro"><h2>{titles[answer.status]}</h2><p className="answer-text">{answer.resposta}</p>
       <div className="result-actions"><button className="secondary" onClick={copy}>Copiar resposta</button>{answer.consultas.length === 1 && <CsvExportButton evidence={answer.consultas[0]} index={1} onFeedback={onFeedback} />}</div>
       <div role="status" aria-label="Feedback de cópia" aria-live="polite" aria-atomic="true">{copyFeedback.message && <p className="action-feedback" key={copyFeedback.sequence}>{copyFeedback.message}</p>}</div>
+      {answer.status === 'esclarecimento' && <><p className="small muted">Complete a pergunta original e envie novamente. Cada consulta é independente.</p><button className="secondary recovery-action" onClick={onReformulate}>Reformular pergunta</button></>}
+      {answer.status === 'sem_dados' && <button className="secondary recovery-action" onClick={onReformulate}>Revisar filtros</button>}
+      {answer.status === 'recusa' && <button className="secondary recovery-action" onClick={onNewQuestion}>Fazer outra pergunta</button>}
     </div>
     {(answer.avisos.length > 0 || answer.consultas.some(evidence => evidence.truncado)) && <div className="result-intro warnings"><h3>Limites e avisos</h3><ul>{answer.avisos.map((warning, i) => <li key={i}>{warning}</li>)}{answer.consultas.map((evidence, i) => evidence.truncado && <li key={`truncation-${i}`} className="truncation">Consulta {i + 1}: resultado truncado. Os dados e o CSV contêm somente as {evidence.linhas.length} linhas recebidas.</li>)}</ul></div>}
     {answer.consultas.map((evidence, i) => <section className="query-result" aria-label={`Dados da consulta ${i + 1}`} key={i}>

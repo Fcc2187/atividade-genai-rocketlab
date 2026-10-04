@@ -29,10 +29,21 @@ export default function App() {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const sending = useRef(false)
   const selected = entries.find(entry => entry.id === selectedId)
+  function focusQuestion() {
+    requestAnimationFrame(() => {
+      inputRef.current?.focus({ preventScroll: true })
+      inputRef.current?.scrollIntoView({ block: 'center' })
+    })
+  }
   function newQuestion() {
     if (sending.current) return
     setSelectedId(null); setQuestion(''); setError(null); setFeedback(''); setModal(null)
-    requestAnimationFrame(() => inputRef.current?.focus())
+    focusQuestion()
+  }
+  function reformulate() {
+    if (sending.current || !selected) return
+    setQuestion(selected.pergunta); setError(null); setFeedback(''); setModal(null)
+    focusQuestion()
   }
   function selectEntry(id: string) {
     if (sending.current) return
@@ -85,14 +96,14 @@ export default function App() {
         <QuestionForm value={question} onChange={value => { setQuestion(value); setError(null) }} onSubmit={submit} pending={pending} error={error} inputRef={inputRef} />
         {!selected && !pending && !error && <div className="examples"><p className="eyebrow muted">PERGUNTAS SUGERIDAS</p><div className="suggestions-grid">{suggestions.map(suggestion => <button key={suggestion} className="secondary" onClick={() => { setQuestion(suggestion); inputRef.current?.focus() }}>{suggestion}</button>)}</div><p className="small muted">As sugestões preenchem o campo. Você escolhe quando enviar.</p></div>}
         {pending && <div className="loading-panel" role="status"><h2>Sua pergunta está sendo processada.</h2><p className="muted">Aguarde a resposta. O envio está temporariamente desativado.</p></div>}
-        {selected && <Result key={selected.id} answer={selected.answer} onFeedback={setFeedback} />}
+        {selected && <Result key={selected.id} answer={selected.answer} onFeedback={setFeedback} onReformulate={reformulate} onNewQuestion={newQuestion} />}
         <button className="secondary mobile-help" onClick={() => setModal('help')}>Como usar</button>
         <p className="sr-only" aria-live="polite">{feedback.startsWith('Resposta recebida') || feedback.startsWith('Resposta reaberta') ? feedback : ''}</p>
       </main>
     </div>
     <Modal open={modal === 'history'} title="Histórico da aba" drawer onClose={() => setModal(null)}><History {...historyProps} /></Modal>
     <Modal open={modal === 'help'} title="Como usar o CineData" onClose={() => setModal(null)}>
-      <div className="help-content"><p>Pergunte em português sobre os filmes disponíveis no catálogo. Você escolhe quando enviar; os exemplos só preenchem o campo.</p><h3>Uma pergunta por vez</h3><p>Cada pergunta é independente. Para esclarecer ou mudar um filtro, reformule a pergunta completa e consulte novamente.</p><h3>Sua sessão</h3><p>O histórico fica nesta aba e é apagado ao recarregar. Reabrir uma resposta não envia outra consulta.</p><h3>Leia as evidências</h3><p>Abra “Ver SQL e dados” para conferir os dados recebidos e exportar o CSV de cada consulta. Resultados truncados contêm somente parte do conjunto.</p><h3>Imagens e cobertura</h3><p>Pôsteres aparecem quando há imagens nos dados de filmes. Se uma imagem faltar, o nome e os valores continuam disponíveis. O catálogo pode ter cobertura incompleta; os resultados não são uma atualização em tempo real.</p></div>
+      <div className="help-content"><p>Pergunte em português sobre os filmes disponíveis no catálogo. Você escolhe quando enviar; os exemplos só preenchem o campo.</p><h3>Uma pergunta por vez</h3><p>Cada pergunta é independente. Para esclarecer ou mudar um filtro, reformule a pergunta completa e consulte novamente.</p><h3>Sua sessão</h3><p>O histórico fica nesta aba e é apagado ao recarregar. Reabrir uma resposta não envia outra consulta.</p><h3>Leia as evidências</h3><p>Os dados e o CSV de cada consulta ficam no resultado. Abra “Ver SQL e dados” para conferir valores originais, SQL e parâmetros. Resultados truncados contêm somente parte do conjunto.</p><h3>Imagens e cobertura</h3><p>Pôsteres aparecem quando há imagens nos dados de filmes. Se uma imagem faltar, o nome e os valores continuam disponíveis. O catálogo pode ter cobertura incompleta; os resultados não são uma atualização em tempo real.</p></div>
     </Modal>
   </>
 }

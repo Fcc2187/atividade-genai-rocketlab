@@ -287,6 +287,30 @@ test.describe('exportacao e copia', () => {
 })
 
 test.describe('consulta e recuperação', () => {
+  for (const [status, action] of [['esclarecimento', 'Reformular pergunta'], ['sem_dados', 'Revisar filtros'], ['recusa', 'Fazer outra pergunta']] as const) {
+    test(`recuperação de ${status} preserva histórico e só consulta por envio explícito`, async ({ page }) => {
+      await page.setViewportSize({ width: 320, height: 812 })
+      let calls = 0
+      const answer = status === 'esclarecimento' ? { ...statusAnswers[status], resposta: 'Você quer IMDb ou TMDB?' } : statusAnswers[status]
+      await page.route('**/api/perguntas', route => { calls++; return route.fulfill({ json: answer }) })
+      await page.goto('/')
+      const input = page.getByRole('textbox', { name: 'Sua pergunta' })
+      await input.fill('Quais são os melhores filmes lançados em 2009?')
+      await page.getByRole('button', { name: 'Consultar →' }).click()
+      await expect(page.getByText(answer.resposta, { exact: true })).toBeVisible()
+      const button = page.getByRole('button', { name: action, exact: true })
+      await button.focus()
+      await page.keyboard.press('Enter')
+      await expect(input).toBeFocused()
+      await expect(input).toHaveValue(status === 'recusa' ? '' : 'Quais são os melhores filmes lançados em 2009?')
+      await expect(input).toBeInViewport()
+      expect(calls).toBe(1)
+      await page.getByRole('button', { name: 'Histórico', exact: true }).click()
+      await page.getByRole('button', { name: 'Quais são os melhores filmes lançados em 2009?', exact: true }).click()
+      await expect(page.getByText(answer.resposta, { exact: true })).toBeVisible()
+      expect(calls).toBe(1)
+    })
+  }
   test('seis sugestões preenchem e focam o campo sem enviar', async ({ page }) => {
     let posts = 0
     await page.route('**/api/perguntas', route => { posts++; return route.fulfill({ json: rankingAnswer }) })
