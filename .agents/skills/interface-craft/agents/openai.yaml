@@ -1,0 +1,5 @@
+
+interface:
+  display_name: "Interface Craft"
+  short_description: "Design, prototype, and review web and native interfaces"
+  default_prompt: "Use $interface-craft to design an accessible interface for my product and target platform."

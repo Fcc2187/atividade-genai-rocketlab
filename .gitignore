@@ -12,6 +12,7 @@ __pycache__/
 /docs/*
 !/docs/INSTALACAO_MODELO.md
 !/docs/VALIDACAO_FINAL.md
+!/docs/INTERFACE_CRAFT.md
 /Atividade GenAI - RocketLab 26.2 Perfis vdev.docx.pdf
 /tutorial-openrouter.html
 /evaluation/RESULTADOS.md
@@ -23,7 +24,8 @@ frontend/test-results/
 frontend/playwright-report/
 frontend/inspiracao-visual/
 *.tsbuildinfo
-/.agents/
+/.agents/*
+!/.agents/skills/
 /skills-lock.json
 /DESIGN-discord.md
 /.superpowers/

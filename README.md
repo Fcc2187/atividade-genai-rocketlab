@@ -101,6 +101,17 @@ npm.cmd run preview
 
 Build gera `frontend/dist/`; preview abre `http://127.0.0.1:4173` com o mesmo proxy local. Preview é para conferir o build, não uma configuração de deploy público. Testes Playwright exercitam o cliente, CSV e os estados reais da interface em desktop e mobile emulado com fixtures do contrato; não precisam de chave, banco ou Groq. O navegador de testes é uma instalação separada. Teclado virtual, safe areas e sensação de toque ainda precisam ser confirmados em celular físico.
 
+## Protótipo no Figma
+
+O [protótipo editável CineData Analytics · Protótipo editorial](https://www.figma.com/design/w838J7ZohM6pp2n2TXZUCN?node-id=78-206) foi criado e aprovado antes da implementação do frontend. Ele reúne a identidade visual, os fluxos de consulta, as telas desktop/mobile e os estados de resultado, carregamento, esclarecimento, ausência de dados e erro.
+
+O arquivo separa telas e componentes em quatro páginas:
+
+- **Telas e fluxos · Claro** e **Telas e fluxos · Escuro**: janelas para navegar pelo fluxo e composições completas para consultar durante o desenvolvimento.
+- **Componentes e estilos · Claro** e **Componentes e estilos · Escuro**: controles, variantes, tipografia, cores, listas de filmes, fallback de pôster e referências de cabeçalho.
+
+Os temas compartilham componentes e tokens semânticos. A marca tem versões clara e escura da logo ao lado de “cinedata”, com o controle de tema no cabeçalho. O protótipo serviu de referência para a interface web; seu conteúdo ilustrativo não substitui os resultados reais do SQLite.
+
 ## Limites e dados enviados
 
 Até três chamadas de modelo e duas tentativas SQL por pergunta. Raciocínio `medium`, até 2048 tokens de geração por chamada, temperatura zero e ferramentas sequenciais. O limite de geração inclui raciocínio e passou nos cinco casos iniciais; a avaliação ampliada verifica casos maiores. Prazo total 600 segundos é um teto herdado da avaliação, não uma promessa de latência.
@@ -152,8 +163,20 @@ Foram observados bloqueios por tokens/dia e tokens/minuto, inclusive entre as du
 
 O ambiente limpo instalado exclusivamente por `requirements.txt` foi verificado novamente com os testes reorganizados. Na demonstração do backend, `/health`, `/docs` e uma pergunta real por HTTP retornaram 200; a contagem dos 95.645 filmes levou 1,92 s, com duas chamadas ao Groq e uma SQL, sem pausa diagnóstica. A refatoração manteve instruções e ferramenta SQL idênticas e não repetiu essa chamada à nuvem. O servidor de demonstração foi encerrado e o hash do SQLite permaneceu igual ao original.
 
+## Documentação
+
+- [Instalação e configuração do modelo](docs/INSTALACAO_MODELO.md).
+- [Validação final, resultados e limites](docs/VALIDACAO_FINAL.md).
+- [Guia da skill interface-craft](docs/INTERFACE_CRAFT.md).
+
+### Skill interface-craft
+
+A [interface-craft](.agents/skills/interface-craft/SKILL.md) foi criada neste projeto para orientar agentes no design, na prototipação editável pelo Figma MCP, na implementação e na revisão de interfaces. É reutilizável para web, iOS e Android, com referências de Apple HIG, Material Design 3 e WCAG 2.2 AA. O CineData é seu primeiro caso de uso; a skill adapta identidade, conteúdo e interação a cada produto.
+
+O pacote em `.agents/skills/interface-craft/` inclui `SKILL.md`, `agents/openai.yaml` e seis referências de apoio. Em um agente com suporte a skills, use `$interface-craft` junto do objetivo, plataforma e escopo desejados. O [guia](docs/INTERFACE_CRAFT.md) explica os modos de uso e a organização dos arquivos. A skill não é uma dependência para executar o CineData.
+
 ## Repositório
 
 `app/main.py` expõe a API; `app/agent.py` executa o agente; `app/prompts.py` contém as instruções e seu builder; `app/database.py` protege a leitura SQLite. `evaluation/run.py` executa a CLI e grava relatórios; `evaluation/grading.py` compara evidências; `evaluation/cases.json` guarda os gabaritos.
 
-Os testes do backend usam fixtures sintéticas em `tests/helpers.py` e se distribuem em `test_database.py`, `test_analytics.py`, `test_agent.py`, `test_groq_adapter.py`, `test_api.py` e `test_evaluation.py`. O comando de descoberta permanece o mesmo, sem dependências Python adicionais. `frontend/src/` separa componentes, cliente HTTP, tipos, exportação CSV e estilos; `frontend/tests/` guarda fixtures e verificações Playwright. README, guia de instalação e resumo de validação são publicados; `.env`, `.venv`, banco, JSONs brutos, ferramentas locais e documentos internos ficam excluídos do Git. Não há deploy público.
+Os testes do backend usam fixtures sintéticas em `tests/helpers.py` e se distribuem em `test_database.py`, `test_analytics.py`, `test_agent.py`, `test_groq_adapter.py`, `test_groq_quota.py`, `test_api.py` e `test_evaluation.py`. O comando de descoberta permanece o mesmo, sem dependências Python adicionais. `frontend/src/` separa componentes, cliente HTTP, tipos, exportação CSV e estilos; `frontend/tests/` guarda fixtures e verificações Playwright. README, guias de instalação e da skill, resumo de validação e `.agents/skills/` são publicados; `.env`, `.venv`, banco, JSONs brutos, ferramentas locais e documentos internos ficam excluídos do Git. Não há deploy público.
