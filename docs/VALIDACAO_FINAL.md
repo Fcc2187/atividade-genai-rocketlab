@@ -2,7 +2,7 @@
 
 Data: 04/10/2026. Referência dos casos: 30/09/2026. Modelo configurado: `openai/gpt-oss-120b`, via Groq.
 
-O smoke final passou nas cinco categorias e o fluxo integrado funcionou com a pausa diagnóstica autorizada. Na avaliação incremental dos 25 casos, 11 estão corretos, um foi bloqueado por cota diária e 13 continuam pendentes. A validação não está concluída; os resultados não demonstram disponibilidade da API normal sob a cota atual nem correção para qualquer pergunta.
+O smoke final passou nas cinco categorias e o fluxo integrado funcionou com a pausa diagnóstica autorizada. Os 25 casos foram executados de forma incremental na mesma versão: 21 corretos e quatro incorretos no grade automático, sem erros de provedor ou casos não executados no último resultado de cada caso. Três divergências são de aliases/formato, com dados equivalentes conferidos manualmente; uma alterou os dados de cobertura. A revisão manual também encontrou erro no resumo textual de margem por gênero. O aceite final permanece pendente de resolver essas divergências; os resultados não demonstram disponibilidade geral da API normal nem correção para qualquer pergunta.
 
 ## Versão e rastreabilidade
 
@@ -81,7 +81,7 @@ Fonte local: groq-final-editorial-smoke30.json, hash final acima. Textos revisad
 
 A bateria parcial01–07 recebeu HTTP413 em05_divergencia_notas: o provedor estimou 10.412 tokens para uma solicitação, acima de8.000. Dois retestes manuais, sem mudar a fonte, passaram; o último trouxe todos os metadados e LIMIT10. Não foi capturado o SQL da primeira falha, portanto não se atribui uma causa SQL que não foi comprovada. A falha permanece registrada, sem retry automático ou conversão silenciosa em sucesso.
 
-A continuação08–25 parou em11_produtora_lucro por HTTP429/TPD: limite diário200.000, usados197.358 e solicitados4.431. O provedor indicou12min52,848s naquele instante; essa espera se refere à solicitação rejeitada, não garante disponibilidade para as chamadas seguintes ou todos os casos restantes. Não foram feitas novas tentativas após esse bloqueio.
+A continuação 08–25 parou em `11_produtora_lucro` por HTTP429/TPD: limite diário 200.000, usados 197.358 e solicitados 4.431. O provedor indicou 12min52,848s naquele instante; essa espera se refere à solicitação rejeitada, não garante disponibilidade para as chamadas seguintes ou todos os casos restantes. A execução parou sem retry automático. Posteriormente, a pedido do usuário, um reteste manual do caso 11 passou em 33,41s diagnósticos: Marvel Studios, USD 14.897.936.776 em 17 filmes. A mesma versão foi mantida na retomada dos casos pendentes.
 
 ### Fluxo integrado real no avaliador
 
@@ -107,7 +107,13 @@ O grade automático avalia status e linhas, não certifica explicações. No cas
 
 Na média anual, valores e amostras estão corretos e o texto declara 2026 parcial, mas `avisos` veio vazio apesar da instrução. Essa execução não comprova o alerta estruturado de ano parcial. Na média de lucro por gênero, a ordenação SQL omitiu desempates por nome/chave; as médias do banco original são distintas e o resultado observado está correto. Essas limitações de aderência às instruções ficam separadas do acerto dos dados.
 
-A disponibilidade de consultas grandes na API normal continua limitada pela cota do provedor. O prompt orienta a seleção de imagens; não existe enriquecimento determinístico que garanta esses campos para toda pergunta futura. As logos originais foram mantidas; sua otimização é opcional.
+Na retomada, o caso 12 trouxe as 19 margens e amostras corretas, mas o texto dos cinco gêneros com menores margens omitiu Tv Movie e incluiu Thriller. A tabela está correta; esse resumo textual não passou na revisão manual.
+
+O caso 14 foi marcado incorreto pelo avaliador porque a métrica veio com alias `diferenca`, não declarado entre os aliases aceitos. Uma comparação independente confirmou os 10 IDs, títulos, notas, diferenças e ordem dentro das tolerâncias originais. O caso 20 retornou uma linha com duas colunas, em vez de duas linhas por ano; a conferência manual confirmou 2025 = 5 e 2026 = 1. O caso 25 usou `qtd_avaliacoes` em vez de `qtd_avaliacoes_usuarios`; os cinco IDs, títulos, contagens e ordem foram conferidos exatamente. Os três mantêm o veredito automático original. Em 20, o texto delimitou 30/09/2026, porém faltou explicitar ano parcial e `avisos` veio vazio.
+
+O caso 19 apresentou divergência real de dados: acrescentou filtro de lançamento até 30/09/2026 à cobertura por gênero, enquanto o gabarito considera todo o catálogo. Isso mudou médias e contagens em Action, Adventure, Comedy, Drama e Romance. Não é equivalência de formato; permanece uma falha de aceite. Os gabaritos e o prompt não foram modificados durante a retomada.
+
+As tentativas anteriores da API normal tiveram rejeições de cota; esta rodada com pausas não comprova sua disponibilidade geral. O prompt orienta a seleção de imagens; não existe enriquecimento determinístico que garanta esses campos para toda pergunta futura. As logos originais foram mantidas; sua otimização é opcional.
 
 ## Reprodução e demonstração
 
@@ -121,7 +127,7 @@ Entrega: [repositório](https://github.com/Fcc2187/atividade-genai-rocketlab). R
 
 ## Resultado por caso
 
-Avaliação incremental de uma única versão: **11 corretos, um bloqueado por cota diária, 13 pendentes**. O caso05 teve HTTP413 na primeira tentativa e dois retestes corretos; essa falha permanece no histórico. Fontes locais: smoke final, bateria parcial01–07, reteste capturado05 e continuação08–25; mesmos hashes/modelo/data. Não foi uma única bateria ininterrupta.
+Avaliação incremental de uma única versão: **21 corretos, 4 incorretos, 0 erros e 0 pendentes**. Falhas anteriores permanecem no histórico, incluindo HTTP413 inicial no caso05 e HTTP429 diário no caso11, que passou no reteste manual. Fontes locais: smoke final, bateria parcial01–07, retestes05, continuação08–25, reteste11 e retomada dos pendentes; mesmos hashes/modelo/data. Não foi uma única bateria ininterrupta.
 
 | Caso | Categoria | Gabarito SQLite | Status/linhas automáticos | Segundos diagnósticos |
 | --- | --- | --- | --- | --- |
@@ -135,18 +141,18 @@ Avaliação incremental de uma única versão: **11 corretos, um bloqueado por c
 | 08_diretor_nota | pessoas | Executado sem truncamento | Corretos | 33,83 |
 | 09_par_ator_diretor | pessoas | Executado sem truncamento | Corretos | 33,36 |
 | 10_filmes_genero | generos_produtoras | Executado sem truncamento | Corretos | 32,78 |
-| 11_produtora_lucro | generos_produtoras | Executado sem truncamento | HTTP429 — cota diária | 0,38 |
-| 12_margem_genero | generos_produtoras | Executado sem truncamento | Não executado | — |
+| 11_produtora_lucro | generos_produtoras | Executado sem truncamento | Corretos no reteste; HTTP429 inicial registrado | 33,41 |
+| 12_margem_genero | generos_produtoras | Executado sem truncamento | Corretos; erro narrativo separado na revisão manual | 33,92 |
 | 13_mais_avaliacoes | engajamento | Executado sem truncamento | Corretos | 33,36 |
-| 14_usuarios_imdb | engajamento | Executado sem truncamento | Não executado | — |
-| 15_sem_dados | seguranca | Executado sem truncamento | Não executado | — |
-| 16_escrita | seguranca | Executado sem truncamento | Não executado | — |
-| 17_melhores | avaliacoes | Executado sem truncamento | Não executado | — |
-| 18_titulo_ambiguo | pessoas | Executado sem truncamento | Não executado | — |
-| 19_cobertura | avaliacoes | Executado sem truncamento | Não executado | — |
-| 20_anos_parciais | generos_produtoras | Executado sem truncamento | Não executado | — |
-| 21_futuros | generos_produtoras | Executado sem truncamento | Não executado | — |
-| 22_pessoa_ambigua | pessoas | Executado sem truncamento | Não executado | — |
-| 23_margem_top5 | financeiro | Executado sem truncamento | Não executado | — |
-| 24_diretores_top5 | pessoas | Executado sem truncamento | Não executado | — |
-| 25_avaliacoes_top5 | engajamento | Executado sem truncamento | Não executado | — |
+| 14_usuarios_imdb | engajamento | Executado sem truncamento | Incorretos no grade; dados equivalentes conferidos manualmente | 34,11 |
+| 15_sem_dados | seguranca | Executado sem truncamento | Corretos | 32,39 |
+| 16_escrita | seguranca | Executado sem truncamento | Corretos | 1,16 |
+| 17_melhores | avaliacoes | Executado sem truncamento | Corretos | 1,23 |
+| 18_titulo_ambiguo | pessoas | Executado sem truncamento | Corretos | 1,33 |
+| 19_cobertura | avaliacoes | Executado sem truncamento | Incorretos; filtro temporal mudou os dados | 34,48 |
+| 20_anos_parciais | generos_produtoras | Executado sem truncamento | Incorretos no grade; dados equivalentes conferidos manualmente | 33,27 |
+| 21_futuros | generos_produtoras | Executado sem truncamento | Corretos | 32,27 |
+| 22_pessoa_ambigua | pessoas | Executado sem truncamento | Corretos | 1,81 |
+| 23_margem_top5 | financeiro | Executado sem truncamento | Corretos | 33,11 |
+| 24_diretores_top5 | pessoas | Executado sem truncamento | Corretos | 33,48 |
+| 25_avaliacoes_top5 | engajamento | Executado sem truncamento | Incorretos no grade; dados equivalentes conferidos manualmente | 33,33 |

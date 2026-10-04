@@ -2,7 +2,7 @@
 
 Aplicação local para consultar o catálogo CineData em português, com interface React e backend FastAPI. Usa Pydantic AI e **openai/gpt-oss-120b via Groq**, com SQLite somente leitura. Interface, API e banco ficam locais; a inferência exige internet e chave Groq. Perguntas são independentes, sem memória.
 
-**Estado em 04/10/2026:** 49 testes Python, 93 verificações frontend e 25 gabaritos SQL locais aprovados. Na versão final `d152201`, o smoke de cinco categorias e o fluxo real com pôsteres/CSV/histórico passaram com pausa diagnóstica somente no avaliador. A avaliação incremental tem 11 casos corretos, um bloqueado pela cota diária Groq e 13 pendentes. A API normal continua sem pausa ou retry; testes sintéticos e tempos diagnósticos não comprovam sua disponibilidade sob a cota. Consulte o [resumo de validação](docs/VALIDACAO_FINAL.md) para hashes, resultados, revisões manuais e limitações.
+**Estado em 04/10/2026:** 49 testes Python, 93 verificações frontend e 25 gabaritos SQL locais aprovados. Na versão final `d152201`, o smoke de cinco categorias e o fluxo real com pôsteres/CSV/histórico passaram com pausa diagnóstica somente no avaliador. Os 25 casos foram executados incrementalmente: 21 corretos e quatro incorretos no grade automático. Três têm dados equivalentes conferidos manualmente; um tem divergência real de cobertura. A revisão encontrou também erro no resumo textual de margem por gênero; o aceite final permanece pendente. A retomada não recebeu novas rejeições de cota. A API normal continua sem pausa ou retry; tempos diagnósticos não comprovam sua disponibilidade geral. Consulte o [resumo de validação](docs/VALIDACAO_FINAL.md) para hashes, resultados e limitações.
 
 ## Preparar o ambiente
 
