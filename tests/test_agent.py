@@ -7,7 +7,7 @@ import time
 from threading import Event
 import unittest
 from unittest.mock import patch
-from tests.helpers import prepare_database, model_answer
+from tests.helpers import prepare_database, model_answer, add_movie_metadata
 from app import agent
 
 
@@ -48,6 +48,15 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
             await self.ask([("consultar_sql", {"sql":"SELECT COUNT(*) AS filmes FROM dim_movies","parametros":{}}), model_answer("sem_dados")])
         empty = await self.ask([("consultar_sql", {"sql":"SELECT COUNT(*) AS filmes FROM dim_movies WHERE titulo=:titulo","parametros":{"titulo":"ausente"}}), model_answer("sem_dados")])
         self.assertEqual(empty.answer.status, "sem_dados")
+
+    async def test_metadados_preservam_homonimos_e_poster_nulo(self):
+        add_movie_metadata(self)
+        sql = 'SELECT m.sk_movie_id, m.titulo, m.ano_lancamento, m.url_poster, f.receita_usd FROM dim_movies m JOIN fact_movies_performance f USING(sk_movie_id) ORDER BY m.sk_movie_id'
+        result = await self.ask([('consultar_sql', {'sql': sql, 'parametros': {}}), model_answer()])
+        self.assertEqual(result.consultas[0].sql, sql)
+        self.assertEqual(result.consultas[0].linhas, [['a', 'Home', 2009, 'https://images.example.test/home.png', 100.0], ['b', 'Home', 2015, None, None]])
+        self.assertEqual(result.uso['chamadas'], 2)
+        self.assertEqual(result.uso['tentativas_sql'], 1)
 
     async def test_limite_tentativas_inclui_erros(self):
         result = await self.ask([("consultar_sql", {"sql":"SELECT inexistente FROM dim_movies","parametros":{}}), ("consultar_sql", {"sql":"SELECT titulo FROM dim_movies","parametros":{}}), model_answer()])

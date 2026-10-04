@@ -56,6 +56,15 @@ def prepare_analytics(test_case):
         """)
     test_case.evaluation = run
 
+
+def add_movie_metadata(test_case):
+    """Extend only the temporary fixture; keep the minimal schema tests intact."""
+    with closing(sqlite3.connect(test_case.path)) as c, c:
+        c.execute('ALTER TABLE dim_movies ADD COLUMN ano_lancamento INTEGER')
+        c.execute('ALTER TABLE dim_movies ADD COLUMN url_poster TEXT')
+        c.execute("UPDATE dim_movies SET titulo='Home', ano_lancamento=2009, url_poster='https://images.example.test/home.png' WHERE sk_movie_id='a'")
+        c.execute("UPDATE dim_movies SET titulo='Home', ano_lancamento=2015 WHERE sk_movie_id='b'")
+
 def query_reference(test_case, case_id):
     from app.database import execute_readonly
     case = next(case for case in test_case.evaluation.load_cases() if case["id"] == case_id)

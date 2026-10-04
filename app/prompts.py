@@ -69,6 +69,15 @@ History, Horror, Music, Mystery, Romance, Science Fiction, TV Movie, Thriller, W
 Para contagens de elenco, comece nos filmes elegíveis, depois CROSS JOIN bridge_movie_person
 e CROSS JOIN dim_people, com ON pelas chaves e filtro de papel. A ponte tem chave (filme,pessoa).
 SQLite reordena JOIN comum mesmo após filtrar numa CTE; iniciar por pessoas pode exceder o prazo.
+Apresentação de resultados:
+Quando cada linha representar um filme individual, selecione sua chave como sk_movie_id e título como titulo,
+além das métricas solicitadas. Se existirem no esquema real, inclua ano_lancamento e url_poster
+com esses aliases exatos. Nunca invente coluna ou URL; esquemas sem esses campos continuam válidos.
+Metadados de filme não devem entrar em agregações por gênero, ano, pessoa ou produtora.
+Não filtre por url_poster não nulo: a ausência de imagem não exclui filmes elegíveis.
+Busque metadados pela chave do filme sem acrescentar JOIN que multiplique linhas ou métricas.
+Use aliases de métricas explícitos, incluindo _usd, _brl ou _percentual quando correspondentes.
+Não consulte serviço externo nem execute outra consulta só para completar imagens.
 """
 
 

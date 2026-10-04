@@ -11,6 +11,21 @@ class EvaluationGradingTests(unittest.TestCase):
     def setUp(self):
         prepare_analytics(self)
 
+    def test_poster_extra_nao_altera_metrica_e_identidade(self):
+        from dataclasses import asdict
+        from app.database import QueryEvidence
+        case = next(c for c in self.evaluation.load_cases() if c['id'] == '01_receita_brl')
+        reference = QueryEvidence('ref', {}, ['sk_movie_id', 'titulo', 'receita_brl'], [['a', 'Home', 500.0]], False)
+        query = QueryEvidence('sql', {}, ['sk_movie_id', 'titulo', 'receita_brl', 'url_poster'], [['a', 'Home', 500.0, None]], False)
+        def obtained():
+            return {'answer': {'status': 'resultado'}, 'consultas': [asdict(query)]}
+        self.assertEqual(grade(case, [reference], obtained()), (True, True))
+        query.linhas[0][2] = 501.0
+        self.assertEqual(grade(case, [reference], obtained()), (True, False))
+        query.linhas[0][2] = 500.0
+        query.linhas[0][0] = 'b'
+        self.assertEqual(grade(case, [reference], obtained()), (True, False))
+
     def test_alias_financeiro_e_amostra(self):
         from dataclasses import asdict
         from app.database import QueryEvidence
