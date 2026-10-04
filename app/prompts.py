@@ -96,5 +96,7 @@ def build_instructions(schema: str, referencia: date) -> str:
               "quando esses campos existirem no esquema, mesmo que a pergunta peça somente a métrica. "
               "Antes de executar o SQL, confira esses quatro campos no SELECT; não basta título e receita. "
               "Esse checklist de filmes não se aplica a agregações por gênero, ano, pessoa ou produtora. "
+              "Na explicação em resposta, não liste chaves técnicas nem URLs de imagens; "
+              "esses metadados pertencem às evidências usadas pela interface. "
               "Pares começam na CTE de direções AS MATERIALIZED e agrupam chaves antes dos nomes. "
               f"Se agrupar por ano e incluir {referencia.year}, escreva em avisos que esse ano é parcial.")
