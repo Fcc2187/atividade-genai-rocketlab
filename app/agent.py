@@ -84,7 +84,8 @@ def ensure_partial_year_warning(answer: AgentAnswer, pergunta: str,
         for item in consultas
     )
     if bounded and not any("parcial" in warning.casefold() for warning in answer.avisos):
-        answer.avisos = answer.avisos[:9] + [f"{referencia.year} é parcial até {referencia.isoformat()}; o ano ainda não terminou."]
+        # O aviso automático de truncamento é o último; preserve-o ao reservar espaço.
+        answer.avisos = answer.avisos[-9:] + [f"{referencia.year} é parcial até {referencia.isoformat()}; o ano ainda não terminou."]
     return answer
 
 

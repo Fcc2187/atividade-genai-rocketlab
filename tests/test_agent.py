@@ -32,6 +32,26 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         adjusted = agent.ensure_partial_year_warning(answer, "Quantos filmes têm lançamento futuro, depois de hoje?", consultas, date(2026,9,30))
         self.assertEqual(adjusted.avisos, [])
 
+    async def test_ano_parcial_preserva_aviso_de_truncamento_com_lista_cheia(self):
+        with closing(sqlite3.connect(self.path)) as connection, connection:
+            connection.execute("ALTER TABLE dim_movies ADD COLUMN data_lancamento TEXT")
+            connection.execute("ALTER TABLE dim_movies ADD COLUMN ano_lancamento INTEGER")
+            connection.executemany("INSERT INTO dim_movies VALUES (?, ?, ?, ?)",
+                                   [(f"extra-{i}", f"Filme {i}", "2026-01-01", 2026) for i in range(101)])
+        sql = "SELECT ano_lancamento FROM dim_movies WHERE data_lancamento <= :referencia ORDER BY sk_movie_id"
+        for warning_count in (9, 10):
+            with self.subTest(warning_count=warning_count):
+                model = self.model([
+                    ("consultar_sql", {"sql": sql, "parametros": {"referencia": "2026-09-30"}}),
+                    ("answer", {"status": "resultado", "resposta": "Filmes de 2026.",
+                                "avisos": [f"Ressalva {i}" for i in range(warning_count)]}),
+                ])
+                result = await agent.responder("Liste os filmes de 2026 até hoje", self.path, date(2026, 9, 30), model)
+                self.assertTrue(result.consultas[0].truncado)
+                self.assertTrue(any("truncado" in aviso for aviso in result.answer.avisos))
+                self.assertTrue(any("2026 é parcial" in aviso for aviso in result.answer.avisos))
+                self.assertLessEqual(len(result.answer.avisos), 10)
+
     def model(self, steps):
         from pydantic_ai.models.function import FunctionModel
         from pydantic_ai.messages import ModelResponse, ToolCallPart
