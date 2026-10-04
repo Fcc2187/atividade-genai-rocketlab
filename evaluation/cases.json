@@ -556,5 +556,49 @@
         }
       }
     ]
+  },
+  {
+    "id": "23_margem_top5",
+    "aliases": {"margem": "margem_percentual"},
+    "categoria": "financeiro",
+    "pergunta": "Quais são os 5 filmes com maior margem de lucro percentual, entre os que possuem receita positiva e orçamento informado?",
+    "data_referencia": "2026-09-30",
+    "status_esperado": "resultado",
+    "regras": [2, 4, 6, 7, 14],
+    "ordenado": true,
+    "abs_tol": 0.000001,
+    "rel_tol": 0.000000001,
+    "criterios": "Margem = 100*(receita-orçamento)/receita em USD, receita positiva, orçamento não nulo. Top 5, desempate título/chave.",
+    "referencias": [{"sql": "SELECT m.sk_movie_id, m.titulo, 100.0*(f.receita_usd-f.orcamento_usd)/f.receita_usd AS margem_percentual FROM dim_movies m JOIN fact_movies_performance f USING(sk_movie_id) WHERE f.receita_usd>0 AND f.orcamento_usd IS NOT NULL ORDER BY margem_percentual DESC, m.titulo, m.sk_movie_id LIMIT 5", "parametros": {}}],
+    "colunas_relevantes": ["titulo", "margem_percentual"]
+  },
+  {
+    "id": "24_diretores_top5",
+    "aliases": {"diretor": "nome_pessoa", "media_imdb": "nota_media_imdb", "media_nota_imdb": "nota_media_imdb", "qtd_filmes": "filmes_validos"},
+    "categoria": "pessoas",
+    "pergunta": "Quais são os 5 diretores com maior média IMDb, considerando pelo menos 5 filmes com nota válida por diretor? Informe também quantos filmes entram em cada média.",
+    "data_referencia": "2026-09-30",
+    "status_esperado": "resultado",
+    "regras": [4, 9, 13, 14, 15, 19],
+    "ordenado": true,
+    "abs_tol": 0.000001,
+    "rel_tol": 0.000000001,
+    "criterios": "Média simples IMDb, cinco notas válidas incluindo zero, amostra, desempate nome/chave. Top 5.",
+    "referencias": [{"sql": "SELECT p.sk_person_id, p.nome_pessoa, AVG(f.nota_imdb) AS nota_media_imdb, COUNT(DISTINCT b.sk_movie_id) AS filmes_validos FROM dim_people p JOIN bridge_movie_person b USING(sk_person_id) JOIN fact_movies_performance f USING(sk_movie_id) WHERE p.tipo_pessoa='Diretor' AND f.nota_imdb IS NOT NULL GROUP BY p.sk_person_id, p.nome_pessoa HAVING COUNT(DISTINCT b.sk_movie_id)>=5 ORDER BY nota_media_imdb DESC, p.nome_pessoa, p.sk_person_id LIMIT 5", "parametros": {}}],
+    "colunas_relevantes": ["nome_pessoa", "nota_media_imdb", "filmes_validos"]
+  },
+  {
+    "id": "25_avaliacoes_top5",
+    "categoria": "engajamento",
+    "pergunta": "Quais são os 5 filmes que receberam mais avaliações de usuários? Informe a contagem de avaliações de cada filme.",
+    "data_referencia": "2026-09-30",
+    "status_esperado": "resultado",
+    "regras": [11, 14, 17],
+    "ordenado": true,
+    "abs_tol": 0,
+    "rel_tol": 0,
+    "criterios": "Contagem agregada dim_reviews.qtd_avaliacoes_usuarios; não popularidade. Top 5, desempate título/chave.",
+    "referencias": [{"sql": "SELECT m.sk_movie_id, m.titulo, r.qtd_avaliacoes_usuarios FROM dim_movies m JOIN dim_reviews r USING(sk_movie_id) WHERE r.qtd_avaliacoes_usuarios IS NOT NULL ORDER BY r.qtd_avaliacoes_usuarios DESC, m.titulo, m.sk_movie_id LIMIT 5", "parametros": {}}],
+    "colunas_relevantes": ["titulo", "qtd_avaliacoes_usuarios"]
   }
 ]
