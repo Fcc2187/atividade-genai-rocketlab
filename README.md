@@ -2,7 +2,7 @@
 
 Aplicação local para consultar o catálogo CineData em português, com interface React e backend FastAPI. Usa Pydantic AI e **openai/gpt-oss-120b via Groq**, com SQLite somente leitura. Interface, API e banco ficam locais; a inferência exige internet e chave Groq. Perguntas são independentes, sem memória.
 
-**Estado em 04/10/2026:** fechamento funcional implementado, com 49 testes Python, 93 verificações do frontend e 25 gabaritos SQL locais aprovados. A avaliação real da versão final encontrou HTTP429 do Groq no primeiro caso e permanece pendente; testes sintéticos não comprovam a capacidade do modelo real. Consulte o [resumo de validação](docs/VALIDACAO_FINAL.md) para versão, comandos, resultados e limitações.
+**Estado em 04/10/2026:** 49 testes Python, 93 verificações frontend e 25 gabaritos SQL locais aprovados. Na versão final `d152201`, o smoke de cinco categorias e o fluxo real com pôsteres/CSV/histórico passaram com pausa diagnóstica somente no avaliador. A avaliação incremental tem 11 casos corretos, um bloqueado pela cota diária Groq e 13 pendentes. A API normal continua sem pausa ou retry; testes sintéticos e tempos diagnósticos não comprovam sua disponibilidade sob a cota. Consulte o [resumo de validação](docs/VALIDACAO_FINAL.md) para hashes, resultados, revisões manuais e limitações.
 
 ## Preparar o ambiente
 
@@ -136,7 +136,11 @@ Limites: 20 segundos por SQL, 100 linhas, 10000 caracteres de SQL, 50 parâmetro
 
 Relatórios incrementais ficam em `runtime/`. Registram fatos/status, duração e uso; memória e quantização do servidor remoto não são medidas. `codigo_agente_sha256` identifica o código do agente e `codigo_prompts_sha256` identifica o módulo de instruções; relatórios anteriores à extração do prompt mantêm o formato original. Erro de cota, indisponibilidade ou prazo interrompe a bateria. Comparação admite SQL diferente, colunas extras e aliases declarados, sem aceitar truncamento ou métricas erradas. Contagens e identificadores são exatos; tolerâncias financeiras 0,01 e notas/margens 0,000001. Explicações e motivos de recusa/esclarecimento exigem revisão manual.
 
-As cinco categorias iniciais passaram na comparação de status/linhas: receita BRL 3,89 s; popularidade 2,25 s; ator na janela móvel 4,50 s; gêneros 2,42 s; avaliações de usuários 2,05 s. Soma de latências 15,11 s, sem contar os intervalos da cota. São medições desta bateria, não uma garantia de tempo ou correção geral.
+### Histórico de versões anteriores
+
+Os resultados seguintes descrevem avaliações anteriores às instruções finais de metadados. Não compõem a aprovação de `d152201`; os resultados atuais estão no [resumo de validação](docs/VALIDACAO_FINAL.md).
+
+As cinco categorias iniciais passaram na comparação de status/linhas: receita BRL 3,89 s; popularidade 2,25 s; ator na janela móvel 4,50 s; gêneros 2,42 s; avaliações de usuários 2,05 s. Soma de latências 15,11 s, sem contar os intervalos da cota. São medições daquela bateria, não uma garantia de tempo ou correção geral.
 
 O consolidado ampliado usa a última execução de cada caso, inclusive falhas, e reúne versões diferentes do prompt e protocolo. Não é uma bateria completa da versão atual. Todos os 22 casos foram avaliados: 21 aprovados automaticamente; a contagem de 2025/2026 foi confirmada manualmente (5 e 1 filmes), pois o SQL retornou anos em colunas e o gabarito usa linhas. O veredito automático desse caso permanece registrado como incorreto por formato; não foi convertido silenciosamente em acerto.
 
