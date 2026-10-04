@@ -11,6 +11,52 @@ class EvaluationGradingTests(unittest.TestCase):
     def setUp(self):
         prepare_analytics(self)
 
+    def test_aliases_de_divergencia_e_avaliacoes_preservam_valor_e_id(self):
+        from dataclasses import asdict
+        from app.database import QueryEvidence
+        for case_id, canonical, alias, value in [
+            ('14_usuarios_imdb', 'divergencia', 'diferenca', 6.0),
+            ('25_avaliacoes_top5', 'qtd_avaliacoes_usuarios', 'qtd_avaliacoes', 13),
+        ]:
+            with self.subTest(case=case_id):
+                case = next(c for c in run.load_cases() if c['id'] == case_id)
+                reference = QueryEvidence('ref', {}, ['sk_movie_id', 'titulo', canonical],
+                                          [['a', 'Home', value]], False)
+                query = QueryEvidence('sql', {}, ['sk_movie_id', 'titulo', 'ano_lancamento', 'url_poster', alias],
+                                      [['a', 'Home', 2024, None, value]], False)
+                def obtained():
+                    return {'answer': {'status': 'resultado'}, 'consultas': [asdict(query)]}
+                self.assertEqual(grade(case, [reference], obtained()), (True, True))
+                query.linhas[0][-1] = value + 1
+                self.assertEqual(grade(case, [reference], obtained()), (True, False))
+                query.linhas[0][-1] = value
+                query.linhas[0][0] = 'b'
+                self.assertEqual(grade(case, [reference], obtained()), (True, False))
+                query.linhas[0][0] = 'a'
+                query.colunas[-1] = 'popularidade'
+                self.assertEqual(grade(case, [reference], obtained()), (True, False))
+
+    def test_contagens_por_ano_em_colunas_identificadas(self):
+        from dataclasses import asdict
+        from app.database import QueryEvidence
+        case = next(c for c in run.load_cases() if c['id'] == '20_anos_parciais')
+        reference = QueryEvidence('ref', {}, ['ano_lancamento', 'filmes'], [[2025, 5], [2026, 1]], False)
+        for columns, rows, truncated, expected in [
+            (['cnt_2026', 'cnt_2025'], [[1, 5]], False, True),
+            (['cnt_2025', 'cnt_2026'], [[5, 2]], False, False),
+            (['cnt_2025', 'cnt_2027'], [[5, 1]], False, False),
+            (['cnt_2025'], [[5]], False, False),
+            (['cnt_2025', 'cnt_2026'], [[5, 1], [5, 1]], False, False),
+            (['cnt_2025', 'cnt_2026'], [[5, 1]], True, False),
+            (['cnt_2025', 'cnt_2026'], [[5, None]], False, False),
+            (['cnt_2025', 'cnt_2025'], [[5, 1]], False, False),
+            (['x2025', 'x2026'], [[5, 1]], False, False),
+        ]:
+            with self.subTest(columns=columns, rows=rows, truncated=truncated):
+                query = QueryEvidence('sql', {}, columns, rows, truncated)
+                obtained = {'answer': {'status': 'resultado'}, 'consultas': [asdict(query)]}
+                self.assertEqual(grade(case, [reference], obtained), (True, expected))
+
     def test_poster_extra_nao_altera_metrica_e_identidade(self):
         from dataclasses import asdict
         from app.database import QueryEvidence
@@ -191,9 +237,11 @@ class EvaluationTests(unittest.TestCase):
                 self.evaluation.main(["--smoke","--database",str(self.path),"--output",str(self.output)])
         report=json.loads(self.output.read_text(encoding="utf-8"))
         self.assertIn("codigo_prompts_sha256",report)
-        for key,filename in (("codigo_agente_sha256","agent.py"),("codigo_prompts_sha256","prompts.py")):
-            with self.subTest(source=filename):
-                expected=hashlib.sha256((run.ROOT / "app" / filename).read_bytes()).hexdigest()
+        for key,path in (("codigo_agente_sha256",run.ROOT / "app" / "agent.py"),
+                         ("codigo_prompts_sha256",run.ROOT / "app" / "prompts.py"),
+                         ("codigo_avaliador_sha256",run.ROOT / "evaluation" / "grading.py")):
+            with self.subTest(source=path.name):
+                expected=hashlib.sha256(path.read_bytes()).hexdigest()
                 self.assertEqual(report[key],expected)
 
     def test_prazo_avaliacao_invalido(self):

@@ -1,6 +1,7 @@
 """Comparação de evidências, independente da execução e do provedor."""
 
 import math
+import re
 
 from app.database import QueryEvidence
 
@@ -44,6 +45,20 @@ def compare_rows(actual: QueryEvidence, expected: QueryEvidence, *, ordered: boo
     return True
 
 
+def normalize_year_counts(query: QueryEvidence, reference: QueryEvidence) -> QueryEvidence:
+    """Aceita um pivot explícito cnt_YYYY sem inferir anos nem preencher ausências."""
+    if (reference.colunas != ['ano_lancamento', 'filmes'] or len(query.linhas) != 1
+            or len(set(query.colunas)) != len(query.colunas)
+            or len(query.linhas[0]) != len(query.colunas)
+            or not all(re.fullmatch(r'cnt_[0-9]{4}', name) for name in query.colunas)):
+        return query
+    years = [int(name[4:]) for name in query.colunas]
+    if set(years) != {row[0] for row in reference.linhas}:
+        return query
+    rows = [[year, count] for year, count in sorted(zip(years, query.linhas[0]))]
+    return QueryEvidence(query.sql, query.parametros, reference.colunas, rows, query.truncado)
+
+
 def grade(case: dict, references: list[QueryEvidence], obtained: dict) -> tuple[bool, bool]:
     status_ok = obtained["answer"]["status"] == case["status_esperado"]
     if case["status_esperado"] in ("esclarecimento", "recusa"):
@@ -52,9 +67,11 @@ def grade(case: dict, references: list[QueryEvidence], obtained: dict) -> tuple[
     for reference in references:
         matched = False
         for query in actual:
-            aliases = case.get("aliases", {})
+            aliases = {'diferenca': 'divergencia', 'qtd_avaliacoes': 'qtd_avaliacoes_usuarios',
+                       **case.get("aliases", {})}
             query = QueryEvidence(query.sql,query.parametros,[aliases.get(name,name) for name in query.colunas],
                                   query.linhas,query.truncado)
+            query = normalize_year_counts(query, reference)
             wanted = case.get("colunas_relevantes", reference.colunas)
             # Chaves não são obrigatórias no ranking; quando presentes, também são conferidas.
             selected = [

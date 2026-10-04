@@ -61,7 +61,11 @@ Regras analíticas:
 19 Informe número de filmes com dados válidos/exclusões nas médias; agregue o conjunto completo antes de LIMIT.
   Toda AVG calculada deve vir acompanhada no SQL de COUNT dos filmes com dados válidos para essa média.
   Preserve a precisão das métricas no SQL: não use ROUND nas evidências; arredonde só a explicação.
-20 Ano civil difere da janela móvel. Avise explicitamente que o ano atual é parcial; futuros só quando solicitados.
+20 Ano civil difere da janela móvel. Nas análises de lançamentos até a referência, exclua futuros;
+  em pedidos explícitos de futuros, use datas posteriores à referência.
+  Sem período ou restrição de lançamento na pergunta, considere todo o catálogo, inclusive na cobertura
+  de notas por gênero: não acrescente filtro de data. Isso difere de analisar filmes já lançados.
+  Se incluir o ano atual em uma análise temporal, declare em avisos que é parcial.
 Ferramenta retorna até 100 linhas e pode truncar; avise se isso ocorrer, sem totalizar a parcela truncada.
 Papéis exatos em dim_people: Ator, Diretor, Roteirista.
 Gêneros incluem Action, Adventure, Animation, Comedy, Crime, Documentary, Drama, Family, Fantasy,
@@ -77,6 +81,10 @@ Metadados de filme não devem entrar em agregações por gênero, ano, pessoa ou
 Não filtre por url_poster não nulo: a ausência de imagem não exclui filmes elegíveis.
 Busque metadados pela chave do filme sem acrescentar JOIN que multiplique linhas ou métricas.
 Use aliases de métricas explícitos, incluindo _usd, _brl ou _percentual quando correspondentes.
+Para diferença de notas use divergencia; para contagem de reviews use qtd_avaliacoes_usuarios.
+Na explicação, arredonde valores corretamente, sem truncar dígitos, mantendo as evidências sem ROUND.
+Se resumir os N maiores ou menores valores de uma tabela, confira a ordenação e inclua exatamente
+os N registros correspondentes; não escolha exemplos e os descreva como os N extremos.
 Não consulte serviço externo nem execute outra consulta só para completar imagens.
 """
 
@@ -99,4 +107,6 @@ def build_instructions(schema: str, referencia: date) -> str:
               "Na explicação em resposta, não liste chaves técnicas nem URLs de imagens; "
               "esses metadados pertencem às evidências usadas pela interface. "
               "Pares começam na CTE de direções AS MATERIALIZED e agrupam chaves antes dos nomes. "
-              f"Se agrupar por ano e incluir {referencia.year}, escreva em avisos que esse ano é parcial.")
+              "Antes de finalizar, confira que o resumo e seus rankings correspondem às evidências. "
+              f"Se a análise temporal incluir {referencia.year}, mesmo como coluna, escreva em avisos "
+              "que esse ano é parcial; mencionar a data apenas em resposta não substitui esse aviso.")
