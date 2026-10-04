@@ -1,348 +1,337 @@
-import { test, expect, type Page } from '@playwright/test'
-import { result, clarification, empty, refusal } from './fixtures'
+import { test, expect } from '@playwright/test'
+import { rankingAnswer, aggregateAnswer, longAnswer, statusAnswers } from './fixtures'
 
-test.beforeEach(async ({ page }) => {
-  await page.route('**/api/health', route => route.fulfill({ json: { status: 'ok', banco: 'disponivel' } }))
-})
-const field = (page: Page) => page.getByRole('textbox', { name: 'Sua pergunta' })
-const send = (page: Page) => page.getByRole('button', { name: 'Consultar catálogo', exact: true })
-async function submit(page: Page, text = 'Quantos filmes existem por gênero?') {
-  await field(page).fill(text)
-  await send(page).click()
-}
-async function history(page: Page) {
-  const toggle = page.getByRole('button', { name: 'Histórico', exact: true })
-  if (await toggle.isVisible() && await toggle.getAttribute('aria-expanded') === 'false') await toggle.click()
-}
-
-test('entrada inicial tem cinco categorias e exemplo só preenche o campo', async ({ page }) => {
-  let calls = 0
-  await page.route('**/api/perguntas', route => { calls++; return route.fulfill({ json: result }) })
-  await page.goto('/')
-  await expect(page.getByRole('heading', { name: 'O que você quer descobrir?' })).toBeVisible()
-  for (const category of ['Finanças', 'Popularidade', 'Elenco e equipe', 'Gêneros e produtoras', 'Avaliações']) {
-    await expect(page.getByRole('button', { name: category, exact: true })).toBeVisible()
-  }
-  await page.getByRole('button', { name: 'Finanças', exact: true }).click()
-  await page.getByRole('button', { name: 'Top 10 filmes com maior receita em R$', exact: true }).click()
-  await expect(field(page)).toHaveValue('Top 10 filmes com maior receita em R$')
-  expect(calls).toBe(0)
-  await expect(field(page)).toBeFocused()
-  await page.screenshot({ path: `test-results/${test.info().project.name}-initial.png`, fullPage: true })
-})
-
-test('validação impede vazio/excesso sem gastar consulta e mantém Unicode', async ({ page }) => {
-  let calls = 0
-  await page.route('**/api/perguntas', route => { calls++; return route.fulfill({ json: clarification }) })
-  await page.goto('/')
-  await field(page).fill('  ')
-  await send(page).click()
-  await expect(page.getByRole('alert')).toContainText('Escreva')
-  await expect(field(page)).toBeFocused()
-  await field(page).fill('😀'.repeat(2001))
-  await send(page).click()
-  await expect(page.getByRole('alert')).toContainText('2000')
-  expect(calls).toBe(0)
-  await field(page).fill('😀'.repeat(2000))
-  await send(page).click()
-  await expect(page.getByRole('heading', { name: 'Precisamos de um detalhe' })).toBeVisible()
-  expect(calls).toBe(1)
-})
-
-test('loading tem tempo decorrido e bloqueia duplicação sem progresso inventado', async ({ page }) => {
-  let calls = 0
-  let finish!: () => void
-  const wait = new Promise<void>(resolve => { finish = resolve })
-  await page.route('**/api/perguntas', async route => { calls++; await wait; await route.fulfill({ json: result }) })
-  await page.goto('/')
-  await submit(page)
-  await expect(page.getByRole('status').filter({ hasText: 'Consultando o catálogo' })).toBeVisible()
-  await expect(page.getByLabel('Tempo decorrido')).toContainText(/00:0[1-9]/)
-  await expect(page.getByRole('button', { name: 'Consultando…' })).toBeDisabled()
-  await expect(field(page)).toBeDisabled()
-  await expect(page.getByRole('progressbar')).toHaveCount(0)
-  expect(calls).toBe(1)
-  finish()
-  await expect(page.getByRole('heading', { name: 'Resultado da consulta' })).toBeVisible()
-})
-
-test('mostra avisos duas tabelas truncamento e detalhes de cada evidência', async ({ page }) => {
-  await page.route('**/api/perguntas', route => route.fulfill({ json: result }))
-  await page.goto('/')
-  await submit(page)
-  await expect(page.getByText(result.resposta, { exact: true })).toBeVisible()
-  await expect(page.getByText(result.avisos[0], { exact: true })).toBeVisible()
-  await expect(page.getByRole('table')).toHaveCount(2)
-  await expect(page.getByText('Dados parciais', { exact: true })).toBeVisible()
-  await expect(page.getByRole('cell', { name: 'Sem valor', exact: true })).toBeVisible()
-  await expect(page.getByRole('cell', { name: 'Texto vazio', exact: true })).toBeVisible()
-  await page.getByText('SQL e parâmetros da consulta 2', { exact: true }).click()
-  await expect(page.getByText(result.consultas[1].sql, { exact: true })).toBeVisible()
-  await page.getByText('Detalhes do modelo e uso', { exact: true }).click()
-  await expect(page.getByText('openai/gpt-oss-120b', { exact: true })).toBeVisible()
-  await expect(page.getByText('6500', { exact: true })).toBeVisible()
-  await page.screenshot({ path: `test-results/${test.info().project.name}-result.png`, fullPage: true })
-})
-
-test('exporta evidência própria em CSV e copia resposta sem nova consulta', async ({ page, context }) => {
-  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
-  let calls = 0
-  await page.route('**/api/perguntas', route => { calls++; return route.fulfill({ json: result }) })
-  await page.goto('/')
-  await submit(page)
-  await page.getByRole('button', { name: 'Copiar resposta', exact: true }).click()
-  await expect(page.getByRole('status').filter({ hasText: 'Resposta copiada' })).toBeVisible()
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(result.resposta)
-  const download = page.waitForEvent('download')
-  await page.getByRole('button', { name: 'Exportar consulta 2 em CSV' }).click()
-  const file = await download
-  expect(file.suggestedFilename()).toBe('cinedata-consulta-2.csv')
-  const stream = await file.createReadStream()
-  const chunks: Buffer[] = []
-  for await (const chunk of stream!) chunks.push(chunk)
-  const csv = Buffer.concat(chunks).toString('utf8')
-  expect(csv).toContain('"titulo","receita_usd"')
-  expect(csv).toContain('"Um filme, ""especial""\nParte 2","1500000.25"')
-  expect(csv).not.toContain('genero')
-  expect(calls).toBe(1)
-})
-
-for (const [fixture, title] of [[clarification, 'Precisamos de um detalhe'], [empty, 'Nenhum dado encontrado'], [refusal, 'Consulta não permitida']] as const) {
-  test(`representa ${fixture.status} e valores de uso ausentes`, async ({ page }) => {
-    await page.route('**/api/perguntas', route => route.fulfill({ json: fixture }))
-    await page.goto('/')
-    await submit(page)
-    await expect(page.getByRole('heading', { name: title })).toBeVisible()
-    await expect(page.getByText(fixture.resposta, { exact: true })).toBeVisible()
-    if (fixture.status === 'sem_dados') await expect(page.getByText('Esta consulta não retornou linhas.')).toBeVisible()
-    await page.getByText('Detalhes do modelo e uso', { exact: true }).click()
-    await expect(page.getByText('Não informado', { exact: true })).toHaveCount(2)
-  })
-}
-
-test('esclarecimento permite editar e envia pergunta independente', async ({ page }) => {
-  const bodies: unknown[] = []
-  await page.route('**/api/perguntas', route => {
-    bodies.push(route.request().postDataJSON())
-    return route.fulfill({ json: bodies.length === 1 ? clarification : result })
-  })
-  await page.goto('/')
-  await submit(page, 'Qual a nota de Home?')
-  await page.getByRole('button', { name: 'Editar pergunta', exact: true }).click()
-  await expect(field(page)).toBeFocused()
-  await expect(field(page)).toHaveValue('Qual a nota de Home?')
-  await submit(page, 'Qual a nota IMDb de Home de 2015?')
-  await expect(page.getByRole('heading', { name: 'Resultado da consulta' })).toBeVisible()
-  expect(bodies).toEqual([{ pergunta: 'Qual a nota de Home?' }, { pergunta: 'Qual a nota IMDb de Home de 2015?' }])
-  await history(page)
-  await page.getByRole('button', { name: /Revisitar: Qual a nota de Home\?$/ }).click()
-  await expect(page.getByRole('heading', { name: 'Precisamos de um detalhe' })).toBeVisible()
-  expect(bodies).toHaveLength(2)
-})
-
-test('histórico em memória revisita resultado e nova consulta não chama API', async ({ page }) => {
-  let calls = 0
-  await page.route('**/api/perguntas', route => { calls++; return route.fulfill({ json: result }) })
-  await page.goto('/')
-  await submit(page, 'Filmes por gênero')
-  await expect(page.getByRole('heading', { name: 'Resultado da consulta' })).toBeVisible()
-  await history(page)
-  await page.getByRole('button', { name: 'Nova consulta', exact: true }).click()
-  await expect(field(page)).toHaveValue('')
-  await history(page)
-  await page.getByRole('button', { name: 'Revisitar: Filmes por gênero', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Resultado da consulta' })).toBeVisible()
-  expect(calls).toBe(1)
-  await page.reload()
-  await history(page)
-  await expect(page.locator('.history-empty:visible').getByText('Suas consultas aparecerão aqui.')).toBeVisible()
-})
-
-for (const [code, status, match] of [
-  ['cota_excedida', 503, 'limite'], ['modelo_indisponivel', 503, 'Groq'],
-  ['configuracao_invalida', 503, 'configuração'], ['banco_indisponivel', 503, 'banco'],
-  ['resposta_invalida', 502, 'resposta'], ['prazo_excedido', 504, 'tempo'], ['entrada_invalida', 422, 'pergunta'],
-] as const) {
-  test(`erro ${code} mantém texto e permite tentativa somente explícita`, async ({ page }) => {
+test.describe('historico e acessibilidade', () => {
+  test('reabre respostas sem POST extra e reload limpa só o histórico', async ({ page }) => {
     let calls = 0
-    await page.route('**/api/perguntas', route => { calls++; return route.fulfill({ status, json: { detail: { codigo: code, mensagem: 'Mensagem interna' } } }) })
+    await page.route('**/api/perguntas', route => { calls++; return route.fulfill({ json: rankingAnswer }) })
     await page.goto('/')
-    await submit(page, 'Minha pergunta')
-    await expect(page.getByRole('alert')).toContainText(new RegExp(match, 'i'))
-    await expect(page.getByRole('alert')).not.toContainText('Mensagem interna')
-    await expect(field(page)).toHaveValue('Minha pergunta')
-    await expect(send(page)).toBeEnabled()
-    expect(calls).toBe(1)
+    const input = page.getByRole('textbox', { name: 'Sua pergunta' })
+    for (const question of ['Primeira pergunta', 'Segunda pergunta']) {
+      await input.fill(question)
+      await page.getByRole('button', { name: 'Consultar →' }).click()
+      await expect(page.getByText(rankingAnswer.resposta, { exact: true })).toBeVisible()
+    }
+    const historyButton = page.getByRole('button', { name: 'Histórico', exact: true })
+    if (await historyButton.isVisible()) await historyButton.click()
+    await page.getByRole('button', { name: 'Primeira pergunta', exact: true }).click()
+    await expect(input).toHaveValue('Primeira pergunta')
+    expect(calls).toBe(2)
+    if (await historyButton.isVisible()) await historyButton.click()
+    await page.getByRole('button', { name: '＋ Nova pergunta' }).click()
+    await expect(input).toBeFocused()
+    await expect(input).toHaveValue('')
+    await expect(page.getByText(rankingAnswer.resposta, { exact: true })).toHaveCount(0)
+    await page.getByRole('button', { name: 'Ativar modo escuro' }).click()
+    await page.reload()
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+    if (await historyButton.isVisible()) await historyButton.click()
+    await expect(page.getByRole('navigation', { name: 'Histórico da aba' }).getByText('Nenhuma pergunta nesta aba.', { exact: true })).toBeVisible()
   })
-}
 
-test('falha de rede preserva pergunta e não confunde health com Groq', async ({ page }) => {
-  await page.route('**/api/perguntas', route => route.abort())
-  await page.goto('/')
-  await expect(page.getByText('Banco disponível', { exact: true })).toBeVisible()
-  await expect(page.getByText(/não verifica o Groq/)).toBeVisible()
-  await submit(page, 'Pergunta offline')
-  await expect(page.getByRole('alert')).toContainText('conectar')
-  await expect(field(page)).toHaveValue('Pergunta offline')
+  test('drawer contém foco e Escape devolve foco ao acionador', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.goto('/')
+    const trigger = page.getByRole('button', { name: 'Histórico', exact: true })
+    await trigger.click()
+    const dialog = page.getByRole('dialog', { name: 'Histórico da aba' })
+    await expect(dialog).toBeVisible()
+    for (let i = 0; i < 6; i++) {
+      await page.keyboard.press('Tab')
+      expect(await dialog.evaluate(element => element.contains(document.activeElement))).toBe(true)
+    }
+    await page.keyboard.press('Escape')
+    await expect(dialog).not.toBeVisible()
+    await expect(trigger).toBeFocused()
+  })
+
+  test('impede nova pergunta durante consulta tardia e mantém tema utilizável', async ({ page }) => {
+    let finish!: () => void
+    const gate = new Promise<void>(resolve => { finish = resolve })
+    await page.route('**/api/perguntas', async route => { await gate; await route.fulfill({ json: rankingAnswer }) })
+    await page.goto('/')
+    await page.getByRole('textbox', { name: 'Sua pergunta' }).fill('Avatar')
+    await page.getByRole('button', { name: 'Consultar →' }).click()
+    await expect(page.getByRole('button', { name: 'Consultando…' })).toBeDisabled()
+    const trigger = page.getByRole('button', { name: 'Histórico', exact: true })
+    if (await trigger.isVisible()) await trigger.click()
+    await expect(page.getByRole('button', { name: '＋ Nova pergunta' })).toBeDisabled()
+    if (await trigger.isVisible()) await page.keyboard.press('Escape')
+    await page.getByRole('button', { name: 'Ativar modo escuro' }).click()
+    finish()
+    await expect(page.getByText(rankingAnswer.resposta, { exact: true })).toBeVisible()
+  })
+
+  test('ajuda tem conteúdo de uso e fecha com retorno de foco', async ({ page }) => {
+    await page.goto('/')
+    const help = page.getByRole('button', { name: 'Como usar' }).first()
+    await help.click()
+    const dialog = page.getByRole('dialog', { name: 'Como usar o CineData' })
+    await expect(dialog).toBeVisible()
+    await expect(dialog).toContainText('Cada pergunta é independente')
+    await page.keyboard.press('Escape')
+    await expect(help).toBeFocused()
+  })
+
+  for (const theme of ['light', 'dark'] as const) test(`320px, texto 200% e espaçamento no tema ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 812 })
+    await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
+    const wideAnswer = { ...longAnswer, avisos: ['https://example.test/' + 'a'.repeat(200)], modelo: 'modelo-' + 'x'.repeat(200) }
+    await page.route('**/api/perguntas', route => route.fulfill({ json: wideAnswer }))
+    await page.goto('/')
+    await page.getByRole('textbox', { name: 'Sua pergunta' }).fill('Filmes')
+    await page.getByRole('button', { name: 'Consultar →' }).click()
+    await page.getByText('Ver SQL e dados', { exact: true }).click()
+    await page.getByText('Modelo e uso', { exact: true }).click()
+    const fontSizes = await page.locator('.answer-text, .film-title > p:first-child').evaluateAll(elements => elements.map(x => parseFloat(getComputedStyle(x).fontSize)))
+    await page.addStyleTag({ content: 'html {font-size: 200%} p,li,button,textarea,label,summary,dt,dd,h1,h2,h3,th,td {line-height:1.5 !important; letter-spacing:.12em !important; word-spacing:.16em !important} p {margin-bottom:2em !important}' })
+    const enlargedSizes = await page.locator('.answer-text, .film-title > p:first-child').evaluateAll(elements => elements.map(x => parseFloat(getComputedStyle(x).fontSize)))
+    expect(enlargedSizes).toEqual(fontSizes.map(size => size * 2))
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    await expect(page.getByText(longAnswer.consultas[0].linhas[0][0] as string, { exact: true }).first()).toBeVisible()
+    const toggle = page.getByRole('button', { name: theme === 'light' ? 'Ativar modo escuro' : 'Ativar modo claro' })
+    await toggle.focus()
+    await page.keyboard.press('Enter')
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme === 'light' ? 'dark' : 'light')
+    const csv = page.getByRole('button', { name: 'Exportar CSV da consulta 1' })
+    await csv.focus()
+    await expect(csv).toBeFocused()
+  })
+
+  test('aviso e modelo extensos conservam reflow em 320 px', async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 812 })
+    const answer = { ...rankingAnswer, avisos: ['https://example.test/' + 'a'.repeat(200)], modelo: 'modelo-' + 'x'.repeat(200) }
+    await page.route('**/api/perguntas', route => route.fulfill({ json: answer }))
+    await page.goto('/')
+    await page.getByRole('textbox', { name: 'Sua pergunta' }).fill('Filmes')
+    await page.getByRole('button', { name: 'Consultar →' }).click()
+    await page.getByText('Modelo e uso', { exact: true }).click()
+    await expect(page.getByText(answer.avisos[0], { exact: true })).toBeVisible()
+    await expect(page.getByText('Modelo: ' + answer.modelo, { exact: true })).toBeVisible()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  })
 })
 
-test('mobile tabela rola internamente e layout não ultrapassa viewport', async ({ page }) => {
-  const wide = { ...result, consultas: [{ ...result.consultas[0], colunas: ['Título muito extenso', 'Coluna B', 'Coluna C', 'Coluna D', 'Coluna E'],
-    linhas: [['Um título com muitas palavras para conferir a leitura em uma tabela', 1, 2, 3, 4]] }] }
-  await page.route('**/api/perguntas', route => route.fulfill({ json: wide }))
-  await page.goto('/')
-  await submit(page)
-  await expect(page.getByRole('table')).toBeVisible()
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
-  const container = page.getByRole('region', { name: 'Tabela da consulta 1' })
-  await expect(container).toHaveAttribute('tabindex', '0')
-  if (test.info().project.name === 'mobile') {
-    expect(await container.evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true)
-    await container.evaluate(el => { el.scrollLeft = 200 })
-    expect(await container.evaluate(el => el.scrollLeft)).toBeGreaterThan(0)
+test.describe('filmes e evidencias', () => {
+  test('mantém a métrica legível em mobile com valor completo acessível', async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 812 })
+    await page.route('**/api/perguntas', route => route.fulfill({ json: rankingAnswer }))
+    await page.goto('/')
+    await page.getByRole('textbox', { name: 'Sua pergunta' }).fill('Filmes')
+    await page.getByRole('button', { name: 'Consultar →' }).click()
+    const metric = page.locator('.film-metrics dd').first()
+    await expect(metric.getByText('US$ 2,92 bi', { exact: true })).toBeVisible()
+    await expect(metric).toContainText('2.920.000.000,00')
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  })
+  test('pôsteres e fallback mantêm identificação e métrica', async ({ page }) => {
+    await page.route('**/api/perguntas', route => route.fulfill({ json: rankingAnswer }))
+    await page.route('https://images.example.test/**', route => route.fulfill(route.request().url().endsWith('avatar.png') ? { path: 'tests/assets/avatar.png' } : { status: 404 }))
+    await page.goto('/')
+    await page.getByRole('textbox', { name: 'Sua pergunta' }).fill('Filmes')
+    await page.getByRole('button', { name: 'Consultar →' }).click()
+    const films = page.getByRole('list', { name: 'Filmes da consulta 1' })
+    await expect(films.getByText('Avatar', { exact: true })).toBeVisible()
+    await expect(films.getByRole('img', { name: 'Pôster de Avatar', exact: true })).toBeVisible()
+    await expect(films.getByText('Pôster indisponível')).toHaveCount(4)
+    await expect(films.getByText(/2\.920\.000\.000/)).toBeVisible()
+    await page.getByText('Ver SQL e dados', { exact: true }).click()
+    await expect(page.getByRole('table')).toBeVisible()
+    await page.getByText('SQL e parâmetros', { exact: true }).click()
+    await expect(page.locator('pre').first()).toContainText('SELECT titulo')
+  })
+
+  test('agregações têm tabela completa sem inventar filmes', async ({ page }) => {
+    await page.route('**/api/perguntas', route => route.fulfill({ json: aggregateAnswer }))
+    await page.goto('/')
+    await page.getByRole('textbox', { name: 'Sua pergunta' }).fill('Gêneros')
+    await page.getByRole('button', { name: 'Consultar →' }).click()
+    await expect(page.getByRole('list', { name: /Filmes da consulta/ })).toHaveCount(0)
+    await page.getByText('Ver SQL e dados', { exact: true }).click()
+    const table = page.getByRole('table')
+    await expect(table.getByText('Drama', { exact: true })).toBeVisible()
+    await expect(table.getByText('Não informado', { exact: true })).toBeVisible()
+    await expect(table.getByText('Texto vazio', { exact: true })).toBeVisible()
+  })
+})
+
+test.describe('exportacao e copia', () => {
+  test('exporta cada evidência com truncamento e só os dados recebidos', async ({ page }) => {
+    await page.route('**/api/perguntas', route => route.fulfill({ json: { ...aggregateAnswer, consultas: [aggregateAnswer.consultas[0], { ...aggregateAnswer.consultas[0], linhas: [['Drama', 42]], truncado: true }] } }))
+    await page.goto('/')
+    await page.getByRole('textbox', { name: 'Sua pergunta' }).fill('Gêneros')
+    await page.getByRole('button', { name: 'Consultar →' }).click()
+    await page.getByText('Ver SQL e dados', { exact: true }).click()
+    await expect(page.getByRole('table')).toHaveCount(2)
+    const downloaded = page.waitForEvent('download')
+    await page.getByRole('button', { name: 'Exportar CSV da consulta 2' }).click()
+    const download = await downloaded
+    expect(download.suggestedFilename()).toBe('cinedata-consulta-2-truncada.csv')
+    const stream = await download.createReadStream()
+    const chunks: Buffer[] = []
+    for await (const chunk of stream!) chunks.push(Buffer.from(chunk))
+    expect(Buffer.concat(chunks).toString('utf8')).toBe('\uFEFFgenero,total\r\nDrama,42\r\n')
+  })
+
+  for (const fails of [false, true]) test(`copiar com permissão ${fails ? 'negada' : 'permitida'}`, async ({ page }) => {
+    await page.addInitScript(shouldFail => {
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (value: string) => {
+        if (shouldFail) throw new DOMException('Negado')
+        Object.assign(window, { copiedText: value })
+      } } })
+    }, fails)
+    await page.route('**/api/perguntas', route => route.fulfill({ json: rankingAnswer }))
+    await page.goto('/')
+    await page.getByRole('textbox', { name: 'Sua pergunta' }).fill('Avatar')
+    await page.getByRole('button', { name: 'Consultar →' }).click()
+    await page.getByRole('button', { name: 'Copiar resposta' }).click()
+    await expect(page.getByRole('status')).toContainText(fails ? 'Selecione o texto' : 'Resposta copiada')
+    expect((await page.getByRole('status').boundingBox())?.height).toBeGreaterThan(8)
+    if (!fails) expect(await page.evaluate(() => (window as Window & { copiedText?: string }).copiedText)).toBe(rankingAnswer.resposta)
+    await expect(page.getByText(rankingAnswer.resposta, { exact: true })).toBeVisible()
+  })
+})
+
+test.describe('consulta e recuperação', () => {
+  test('seis sugestões preenchem e focam o campo sem enviar', async ({ page }) => {
+    let posts = 0
+    await page.route('**/api/perguntas', route => { posts++; return route.fulfill({ json: rankingAnswer }) })
+    await page.goto('/')
+    const suggestions = [
+      'Quais são os 5 filmes com maior bilheteria em dólares?',
+      'Quais são os 5 filmes mais populares?',
+      'Quais são os 5 filmes com maior nota no IMDb?',
+      'Qual filme recebeu mais avaliações de usuários?',
+      'Quantos filmes existem por gênero?',
+      'Qual diretor tem a maior média IMDb, considerando pelo menos 5 filmes?',
+    ]
+    const input = page.getByRole('textbox', { name: 'Sua pergunta' })
+    for (const suggestion of suggestions) {
+      await page.getByRole('button', { name: suggestion, exact: true }).click()
+      await expect(input).toHaveValue(suggestion)
+      await expect(input).toBeFocused()
+    }
+    expect(posts).toBe(0)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    await page.getByRole('button', { name: 'Consultar →' }).click()
+    await expect(page.getByText(rankingAnswer.resposta, { exact: true })).toBeVisible()
+    expect(posts).toBe(1)
+  })
+  test('exemplo só preenche, bloqueia duplicata e mostra a resposta', async ({ page }) => {
+    const posts: unknown[] = []
+    let finish!: () => void
+    const gate = new Promise<void>(resolve => { finish = resolve })
+    await page.route('**/api/perguntas', async route => {
+      posts.push(route.request().postDataJSON())
+      await gate
+      await route.fulfill({ json: rankingAnswer })
+    })
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Quais são os 5 filmes com maior bilheteria em dólares?', exact: true }).click()
+    expect(posts).toHaveLength(0)
+    const input = page.getByRole('textbox', { name: 'Sua pergunta' })
+    await expect(input).toBeFocused()
+    await input.press('Enter')
+    await expect(page.getByRole('button', { name: 'Consultando…' })).toBeDisabled()
+    await input.press('Enter')
+    expect(posts).toEqual([{ pergunta: 'Quais são os 5 filmes com maior bilheteria em dólares?' }])
+    finish()
+    await expect(page.getByText(rankingAnswer.resposta, { exact: true })).toBeVisible()
+  })
+
+  test('Shift+Enter e IME não enviam; HTML do modelo é texto', async ({ page }) => {
+    const posts: unknown[] = []
+    await page.route('**/api/perguntas', async route => {
+      posts.push(route.request().postDataJSON())
+      await route.fulfill({ json: { ...rankingAnswer, resposta: '<img src=x onerror=alert(1)>' } })
+    })
+    await page.goto('/')
+    const input = page.getByRole('textbox', { name: 'Sua pergunta' })
+    await input.fill('Avatar')
+    await input.press('Shift+Enter')
+    await expect(input).toHaveValue('Avatar\n')
+    await input.dispatchEvent('keydown', { key: 'Enter', code: 'Enter', isComposing: true })
+    expect(posts).toHaveLength(0)
+    await page.getByRole('button', { name: 'Consultar →' }).click()
+    await expect(page.getByText('<img src=x onerror=alert(1)>', { exact: true })).toBeVisible()
+    await expect(page.locator('[onerror]')).toHaveCount(0)
+  })
+
+  for (const [status, answer] of Object.entries(statusAnswers)) test(`apresenta o status ${status}`, async ({ page }) => {
+    await page.route('**/api/perguntas', route => route.fulfill({ json: answer }))
+    await page.goto('/')
+    await page.getByRole('textbox', { name: 'Sua pergunta' }).fill('Avatar')
+    await page.getByRole('button', { name: 'Consultar →' }).click()
+    await expect(page.getByText(answer.resposta, { exact: true })).toBeVisible()
+  })
+
+  for (const [httpStatus, code] of [[422, 'entrada_invalida'], [503, 'banco_indisponivel'], [503, 'configuracao_invalida'], [503, 'modelo_indisponivel'], [503, 'cota_excedida'], [502, 'resposta_invalida'], [504, 'prazo_excedido']] as const) {
+    test(`preserva entrada e só tenta novamente por ação explícita: ${code}`, async ({ page }) => {
+      let calls = 0
+      await page.route('**/api/perguntas', async route => {
+        calls++
+        await route.fulfill(calls === 1 ? { status: httpStatus, json: { detail: { codigo: code, mensagem: 'private detail' } } } : { json: rankingAnswer })
+      })
+      await page.goto('/')
+      await page.getByRole('textbox', { name: 'Sua pergunta' }).fill('Avatar')
+      await page.getByRole('button', { name: 'Consultar →' }).click()
+      await expect(page.getByRole('alert')).toBeVisible()
+      await expect(page.getByRole('textbox', { name: 'Sua pergunta' })).toHaveValue('Avatar')
+      expect(calls).toBe(1)
+      await expect(page.getByText('private detail')).toHaveCount(0)
+      await page.getByRole('button', { name: 'Tentar novamente' }).click()
+      await expect(page.getByText(rankingAnswer.resposta, { exact: true })).toBeVisible()
+      expect(calls).toBe(2)
+    })
   }
 })
 
-test('movimento pode pausar e reduced-motion mantém formas estáticas', async ({ page }) => {
-  await page.goto('/')
-  const shape = page.locator('.ambient-shape').first()
-  await expect(shape).toHaveCSS('animation-play-state', 'running')
-  await history(page)
-  await page.getByRole('button', { name: 'Pausar animação' }).click()
-  await expect(shape).toHaveCSS('animation-play-state', 'paused')
-  await page.getByRole('button', { name: 'Retomar animação' }).click()
-  await expect(shape).toHaveCSS('animation-play-state', 'running')
-  await page.emulateMedia({ reducedMotion: 'reduce' })
-  await expect(shape).toHaveCSS('animation-name', 'none')
-  await expect(page.locator('.ambient')).toHaveCSS('pointer-events', 'none')
-})
-
-test('resultado troca apresentação inicial por leitura e composer abaixo das evidências', async ({ page }) => {
-  await page.route('**/api/perguntas', route => route.fulfill({ json: result }))
-  await page.goto('/')
-  await submit(page)
-  await expect(page.getByRole('heading', { name: 'O que você quer descobrir?' })).toHaveCount(0)
-  await expect(page.getByRole('heading', { name: 'Explore o catálogo', exact: true })).toBeVisible()
-  const table = await page.getByRole('table').last().boundingBox()
-  const composer = await field(page).boundingBox()
-  expect(composer!.y).toBeGreaterThan(table!.y + table!.height)
-  if (test.info().project.name === 'desktop') await expect(page.getByRole('complementary', { name: 'Explorar o catálogo' })).toBeVisible()
-})
-
-test('histórico mobile é modal e Escape restaura foco ao botão de abertura', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 })
-  await page.goto('/')
-  const trigger = page.getByRole('button', { name: 'Histórico', exact: true })
-  await trigger.click()
-  await expect(page.getByRole('dialog', { name: 'Histórico da sessão' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Fechar histórico', exact: true })).toBeFocused()
-  await page.keyboard.press('Escape')
-  await expect(page.getByRole('dialog')).toHaveCount(0)
-  await expect(trigger).toBeFocused()
-})
-
-test('teclado acessa exemplos campo envio e detalhes sem perda de foco', async ({ page }) => {
-  await page.route('**/api/perguntas', route => route.fulfill({ json: result }))
-  await page.goto('/')
-  await page.keyboard.press('Tab')
-  await expect(page.getByRole('link', { name: 'Ir para a consulta' })).toBeFocused()
-  await page.keyboard.press('Enter')
-  await expect(page.getByRole('main')).toBeFocused()
-  await field(page).focus()
-  await field(page).fill('Consulta com teclado')
-  await page.keyboard.press('Control+Enter')
-  await expect(page.getByRole('heading', { name: 'Resultado da consulta' })).toBeVisible()
-  await page.getByText('Detalhes do modelo e uso', { exact: true }).focus()
-  await page.keyboard.press('Enter')
-  await expect(page.getByText('openai/gpt-oss-120b', { exact: true })).toBeVisible()
-})
-
-test('atalho de pular fica oculto durante leitura e surge somente com foco', async ({ page }) => {
-  await page.goto('/')
-  const skip = page.getByRole('link', { name: 'Ir para a consulta' })
-  await expect(skip).toHaveCSS('clip-path', 'inset(50%)')
-  await page.keyboard.press('Tab')
-  await expect(skip).toBeFocused()
-  await expect(skip).toHaveCSS('clip-path', 'none')
-})
-
-test('histórico preserva erros e permanece bloqueado durante consulta pendente', async ({ page }) => {
-  let calls = 0
-  let finish!: () => void
-  const pending = new Promise<void>(resolve => { finish = resolve })
-  await page.route('**/api/perguntas', async route => {
-    calls++
-    if (calls === 1) await route.fulfill({ status: 503, json: { detail: { codigo: 'cota_excedida', mensagem: 'limite' } } })
-    else { await pending; await route.fulfill({ json: result }) }
+test.describe('estrutura e tema', () => {
+  test('apresenta a consulta sem resultados fictícios e persiste o tema escolhido', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'light' })
+    await page.goto('/')
+    await expect(page.getByRole('heading', { level: 1 })).toContainText('O cinema tem histórias.')
+    await expect(page.getByText('cinedata', { exact: true })).toBeVisible()
+    await expect(page.getByRole('table')).toHaveCount(0)
+    await page.getByRole('button', { name: 'Ativar modo escuro' }).click()
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+    await page.reload()
+    await expect(page.getByRole('button', { name: 'Ativar modo claro' })).toBeVisible()
+    await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute('content', '#1B1819')
   })
-  await page.goto('/')
-  await submit(page, 'Minha primeira consulta')
-  await expect(page.getByRole('alert')).toContainText('limite')
-  await submit(page, 'Minha segunda consulta')
-  await history(page)
-  await expect(page.getByRole('button', { name: 'Revisitar: Minha primeira consulta' })).toBeDisabled()
-  await expect(page.getByRole('button', { name: 'Nova consulta', exact: true })).toBeDisabled()
-  finish()
-  await expect(page.getByRole('heading', { name: 'Resultado da consulta' })).toBeVisible()
-  await history(page)
-  await page.getByRole('button', { name: 'Revisitar: Minha primeira consulta' }).click()
-  await expect(page.getByRole('alert')).toContainText('limite')
-  expect(calls).toBe(2)
-})
 
-test('conteúdo longo permanece legível em tela estreita tablet e desktop', async ({ page }) => {
-  const long = { ...result, resposta: 'Texto de análise com evidência. '.repeat(120), avisos: ['Ressalva '.repeat(50)],
-    consultas: [{ ...result.consultas[1], sql: 'SELECT ' + 'coluna'.repeat(1000), linhas: [['Título '.repeat(200), 1]] }] }
-  await page.route('**/api/perguntas', route => route.fulfill({ json: long }))
-  await page.goto('/')
-  await submit(page)
-  await expect(page.getByRole('heading', { name: 'Resultado da consulta' })).toBeVisible()
-  await page.getByText('SQL e parâmetros da consulta 1', { exact: true }).click()
-  for (const width of [320, 800, 1920]) {
-    await page.setViewportSize({ width, height: 900 })
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
-    await expect(page.getByText(long.resposta, { exact: true })).toBeVisible()
-  }
-})
-
-test('falha de copiar tem recuperação acessível sem alterar resposta', async ({ page }) => {
-  await page.addInitScript(() => Object.defineProperty(navigator, 'clipboard', { value: { writeText: async () => { throw new DOMException('Permission denied') } } }))
-  await page.route('**/api/perguntas', route => route.fulfill({ json: result }))
-  await page.goto('/')
-  await submit(page)
-  await page.getByRole('button', { name: 'Copiar resposta', exact: true }).click()
-  await expect(page.getByRole('status').filter({ hasText: 'copie manualmente' })).toBeVisible()
-  await expect(page.getByText(result.resposta, { exact: true })).toBeVisible()
-})
-
-test('Enter edita, IME não envia e dois submits no mesmo ciclo geram um POST', async ({ page }) => {
-  let calls = 0
-  await page.route('**/api/perguntas', route => { calls++; return route.fulfill({ json: result }) })
-  await page.goto('/')
-  await field(page).fill('Linha um')
-  await field(page).press('Enter')
-  await expect(field(page)).toHaveValue('Linha um\n')
-  await field(page).dispatchEvent('keydown', { key: 'Enter', ctrlKey: true, isComposing: true })
-  expect(calls).toBe(0)
-  await page.locator('form').evaluate(form => {
-    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
-    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+  test('acompanha preferência do sistema até a escolha explícita', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'dark' })
+    await page.goto('/')
+    await expect(page.getByRole('button', { name: 'Ativar modo claro' })).toBeVisible()
+    await page.emulateMedia({ colorScheme: 'light' })
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
+    await page.getByRole('button', { name: 'Ativar modo escuro' }).click()
+    await page.emulateMedia({ colorScheme: 'light' })
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
   })
-  await expect(page.getByRole('heading', { name: 'Resultado da consulta' })).toBeVisible()
-  expect(calls).toBe(1)
-})
 
-test('mobile inicial deixa envio visível e drawer contém o foco', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 })
-  await page.goto('/')
-  await expect(send(page)).toBeInViewport()
-  await page.getByRole('button', { name: 'Histórico', exact: true }).click()
-  await page.getByRole('button', { name: 'Pausar animação' }).focus()
-  await page.keyboard.press('Tab')
-  // O Chromium pode passar pelos controles do navegador entre o último e o primeiro item.
-  await expect(field(page)).not.toBeFocused()
-  await page.keyboard.press('Tab')
-  expect(await page.evaluate(() => !!document.activeElement?.closest('dialog'))).toBe(true)
-  await page.keyboard.press('Escape')
-  await expect(field(page)).toHaveCSS('font-size', '16px')
+  test('funciona quando o storage é bloqueado', async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(window, 'localStorage', { get() { throw new DOMException('Bloqueado', 'SecurityError') } })
+    })
+    await page.emulateMedia({ colorScheme: 'light' })
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Ativar modo escuro' }).click()
+    await expect(page.getByRole('button', { name: 'Ativar modo claro' })).toBeVisible()
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+  })
+
+  test('mantém marca e ações acessíveis em 320 px', async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 812 })
+    await page.emulateMedia({ colorScheme: 'light' })
+    await page.goto('/')
+    const toggle = page.getByRole('button', { name: 'Ativar modo escuro' })
+    await expect(toggle).toBeVisible()
+    expect((await toggle.boundingBox())?.width).toBe(48)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    await toggle.focus()
+    await page.keyboard.press('Enter')
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+  })
 })

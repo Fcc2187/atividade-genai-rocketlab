@@ -1,81 +1,51 @@
-import type { QuestionResponse, QueryEvidence } from './types'
+import type { Answer } from './types'
 
 const messages: Record<string, string> = {
-  entrada_invalida: 'Confira a pergunta: escreva entre 1 e 2000 caracteres e envie novamente.',
-  banco_indisponivel: 'O banco de filmes não está disponível. Confira se o arquivo está na pasta do backend.',
-  configuracao_invalida: 'A configuração do backend precisa ser revisada. Confira o arquivo .env no servidor.',
-  modelo_indisponivel: 'O Groq não está disponível agora. Confira a conexão e a configuração do backend antes de tentar novamente.',
-  cota_excedida: 'O limite de uso do Groq foi atingido. Aguarde a renovação da cota antes de enviar outra consulta.',
-  resposta_invalida: 'Não foi possível validar a resposta. Você pode reformular a pergunta e enviá-la novamente.',
-  prazo_excedido: 'A consulta ultrapassou o tempo disponível. Experimente uma pergunta mais específica.',
-  falha_rede: 'Não foi possível conectar ao backend. Confira se ele está em execução e se há conexão de rede.',
-  erro_servidor: 'O servidor não conseguiu concluir a consulta. Confira o backend antes de tentar novamente.',
+  entrada_invalida: 'Revise sua pergunta. Use de 1 a 2.000 caracteres.',
+  banco_indisponivel: 'O catálogo está indisponível. Tente novamente mais tarde.',
+  configuracao_invalida: 'O serviço precisa ser configurado. Tente novamente quando estiver disponível.',
+  modelo_indisponivel: 'O serviço de respostas está indisponível. Tente novamente mais tarde.',
+  cota_excedida: 'O limite de consultas do serviço foi atingido. Aguarde antes de tentar novamente.',
+  resposta_invalida: 'Não foi possível interpretar a resposta. Tente novamente ou reformule a pergunta.',
+  prazo_excedido: 'A consulta demorou mais que o limite. Tente uma pergunta com um recorte menor.',
+  conexao_indisponivel: 'Não foi possível conectar ao serviço. Confira a conexão e tente novamente.',
+  servico_indisponivel: 'Não foi possível concluir a consulta. Tente novamente mais tarde.',
 }
-
 export class ApiError extends Error {
-  constructor(public code: string, message = messages[code] ?? messages.erro_servidor, public httpStatus?: number) {
-    super(message)
-    this.name = 'ApiError'
-  }
+  constructor(public codigo: string) { super(messages[codigo] ?? messages.servico_indisponivel); this.name = 'ApiError' }
 }
-
-function record(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
+export function normalizeQuestion(raw: string): string {
+  const value = raw.trim()
+  if (!value || Array.from(value).length > 2000) throw new ApiError('entrada_invalida')
+  return value
 }
-function scalar(value: unknown): boolean {
-  return value === null || typeof value === 'string' || typeof value === 'number' && Number.isFinite(value)
+const record = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
+const scalar = (value: unknown) => value === null || typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value))
+function validAnswer(value: unknown): value is Answer {
+  if (!record(value) || typeof value.status !== 'string' || !['resultado', 'esclarecimento', 'recusa', 'sem_dados'].includes(value.status)) return false
+  if (typeof value.resposta !== 'string' || !value.resposta.trim() || typeof value.modelo !== 'string') return false
+  if (!Array.isArray(value.avisos) || !value.avisos.every(x => typeof x === 'string')) return false
+  if (!record(value.uso) || !Object.values(value.uso).every(x => x === null || (typeof x === 'number' && Number.isInteger(x) && x >= 0))) return false
+  return Array.isArray(value.consultas) && value.consultas.every(query => {
+    if (!record(query) || typeof query.sql !== 'string' || typeof query.truncado !== 'boolean' || !record(query.parametros)) return false
+    if (!Object.values(query.parametros).every(scalar) || !Array.isArray(query.colunas) || !query.colunas.every(x => typeof x === 'string')) return false
+    const columns = query.colunas.length
+    return Array.isArray(query.linhas) && query.linhas.every(row => Array.isArray(row) && row.length === columns && row.every(scalar))
+  })
 }
-function evidence(value: unknown): value is QueryEvidence {
-  return record(value) && typeof value.sql === 'string' && record(value.parametros)
-    && Object.values(value.parametros).every(scalar) && typeof value.truncado === 'boolean'
-    && Array.isArray(value.colunas) && value.colunas.length <= 64 && value.colunas.every(col => typeof col === 'string')
-    && Array.isArray(value.linhas) && value.linhas.length <= 100
-    && value.linhas.every(row => Array.isArray(row) && row.length === (value.colunas as unknown[]).length && row.every(scalar))
-}
-function answer(value: unknown): value is QuestionResponse {
-  return record(value) && typeof value.status === 'string' && ['resultado', 'esclarecimento', 'sem_dados', 'recusa'].includes(value.status)
-    && typeof value.resposta === 'string' && value.resposta.trim().length > 0
-    && Array.isArray(value.avisos) && value.avisos.every(warning => typeof warning === 'string')
-    && Array.isArray(value.consultas) && value.consultas.every(evidence)
-    && typeof value.modelo === 'string' && record(value.uso)
-    && Object.values(value.uso).every(item => item === null || typeof item === 'number' && Number.isInteger(item) && item >= 0)
-}
-
-async function request(path: string, init?: RequestInit): Promise<unknown> {
+export async function askQuestion(pergunta: string): Promise<Answer> {
+  const normalized = normalizeQuestion(pergunta)
   let response: Response
   try {
-    response = await fetch(`/api${path}`, { ...init, cache: 'no-store' })
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') throw error
-    throw new ApiError('falha_rede')
-  }
+    response = await fetch('/api/perguntas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pergunta: normalized }) })
+  } catch { throw new ApiError('conexao_indisponivel') }
   let body: unknown
-  try { body = await response.json() } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') throw error
-    body = null
-  }
+  try { body = await response.json() } catch { throw new ApiError(response.ok ? 'resposta_invalida' : 'servico_indisponivel') }
   if (!response.ok) {
-    const detail = record(body) && record(body.detail) ? body.detail : null
-    const code = typeof detail?.codigo === 'string' && Object.hasOwn(messages, detail.codigo) ? detail.codigo
-      : response.status === 422 ? 'entrada_invalida'
-      : response.status === 504 ? 'prazo_excedido'
-      : response.status === 502 ? 'resposta_invalida' : 'erro_servidor'
-    throw new ApiError(code, undefined, response.status)
+    const fallback = ({ 422: 'entrada_invalida', 502: 'resposta_invalida', 503: 'servico_indisponivel', 504: 'prazo_excedido' } as Record<number, string>)[response.status] ?? 'servico_indisponivel'
+    const code = record(body) && record(body.detail) && typeof body.detail.codigo === 'string' ? body.detail.codigo : fallback
+    throw new ApiError(Object.hasOwn(messages, code) ? code : fallback)
   }
+  if (!validAnswer(body)) throw new ApiError('resposta_invalida')
   return body
-}
-
-export async function askQuestion(pergunta: string, signal?: AbortSignal): Promise<QuestionResponse> {
-  const trimmed = pergunta.trim()
-  if (!trimmed || Array.from(trimmed).length > 2000) throw new ApiError('entrada_invalida')
-  const body = await request('/perguntas', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pergunta: trimmed }), signal,
-  })
-  if (!answer(body)) throw new ApiError('resposta_invalida')
-  return body
-}
-
-export async function checkHealth(signal?: AbortSignal): Promise<void> {
-  const body = await request('/health', { signal })
-  if (!record(body) || body.status !== 'ok' || body.banco !== 'disponivel') throw new ApiError('banco_indisponivel')
 }

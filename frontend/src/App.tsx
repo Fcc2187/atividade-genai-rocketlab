@@ -1,109 +1,98 @@
 import { useEffect, useRef, useState } from 'react'
-import { ApiError, askQuestion, checkHealth } from './api'
+import Header from './components/Header'
+import QuestionForm from './components/QuestionForm'
+import Result from './components/Result'
+import History from './components/History'
+import Modal from './components/Modal'
+import { askQuestion, normalizeQuestion } from './api'
 import type { HistoryEntry } from './types'
-import { Background } from './components/Background'
-import { Brand, BrandMark } from './components/Brand'
-import { Examples } from './components/Examples'
-import { History } from './components/History'
-import { Icon } from './components/Icon'
-import { Loading } from './components/Loading'
-import { QuestionForm } from './components/QuestionForm'
-import { Result } from './components/Result'
+
+const suggestions = [
+  'Quais são os 5 filmes com maior bilheteria em dólares?',
+  'Quais são os 5 filmes mais populares?',
+  'Quais são os 5 filmes com maior nota no IMDb?',
+  'Qual filme recebeu mais avaliações de usuários?',
+  'Quantos filmes existem por gênero?',
+  'Qual diretor tem a maior média IMDb, considerando pelo menos 5 filmes?',
+]
 
 export default function App() {
-  const [pergunta, setPergunta] = useState('')
-  const [validation, setValidation] = useState<string | null>(null)
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light')
+  const explicitTheme = useRef(false)
+  const [question, setQuestion] = useState('')
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [entries, setEntries] = useState<HistoryEntry[]>([])
-  const [activeId, setActiveId] = useState<string | null>(null)
-  const [pending, setPending] = useState<number | null>(null)
-  const [historyOpen, setHistoryOpen] = useState(false)
-  const [paused, setPaused] = useState(false)
-  const [bank, setBank] = useState<'checking' | 'ready' | 'unavailable'>('checking')
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [feedback, setFeedback] = useState('')
+  const [modal, setModal] = useState<'history' | 'help' | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
-  const requestInFlight = useRef(false)
-  const questionController = useRef<AbortController | null>(null)
-  const active = entries.find(entry => entry.id === activeId)
-
-  useEffect(() => {
-    let mounted = true
-    const healthController = new AbortController()
-    checkHealth(healthController.signal).then(() => { if (mounted) setBank('ready') }).catch(() => { if (mounted) setBank('unavailable') })
-    return () => { mounted = false; healthController.abort(); questionController.current?.abort() }
-  }, [])
-
-  function edit(text: string) {
-    if (requestInFlight.current) return
-    setPergunta(text); setValidation(null); setHistoryOpen(false)
-    inputRef.current?.focus()
-  }
+  const sending = useRef(false)
+  const selected = entries.find(entry => entry.id === selectedId)
   function newQuestion() {
-    if (!requestInFlight.current) {
-      setActiveId(null); edit('')
-      requestAnimationFrame(() => inputRef.current?.focus())
-    }
+    if (sending.current) return
+    setSelectedId(null); setQuestion(''); setError(null); setFeedback(''); setModal(null)
+    requestAnimationFrame(() => inputRef.current?.focus())
   }
-  function select(entry: HistoryEntry) {
-    if (requestInFlight.current) return
-    setActiveId(entry.id); setPergunta(entry.pergunta); setValidation(null); setHistoryOpen(false)
+  function selectEntry(id: string) {
+    if (sending.current) return
+    const entry = entries.find(item => item.id === id)
+    if (!entry) return
+    setSelectedId(id); setQuestion(entry.pergunta); setError(null); setModal(null); setFeedback('Resposta reaberta do histórico, sem uma nova consulta.')
   }
+  const historyProps = { entries, selectedId, pending, onSelect: selectEntry, onNewQuestion: newQuestion }
   async function submit() {
-    if (requestInFlight.current) return
-    const trimmed = pergunta.trim()
-    if (!trimmed || Array.from(trimmed).length > 2000) {
-      setValidation(!trimmed ? 'Escreva uma pergunta para consultar o catálogo.' : 'Use no máximo 2000 caracteres na pergunta.')
-      inputRef.current?.focus(); return
-    }
-    requestInFlight.current = true
-    const controller = new AbortController()
-    questionController.current = controller
-    const start = performance.now()
-    setPending(start); setActiveId(null); setValidation(null); setHistoryOpen(false)
-    const entry: HistoryEntry = { id: crypto.randomUUID(), pergunta: trimmed, createdAt: Date.now(), duration: 0 }
-    try { entry.response = await askQuestion(trimmed, controller.signal) }
-    catch (error) {
-      const failure = error instanceof ApiError ? error : new ApiError('resposta_invalida')
-      entry.error = { code: failure.code, message: failure.message }
-    } finally {
-      entry.duration = (performance.now() - start) / 1000
-      if (!controller.signal.aborted) {
-        setEntries(previous => [entry, ...previous]); setActiveId(entry.id)
-        setPending(null)
-      }
-      questionController.current = null; requestInFlight.current = false
-    }
+    if (sending.current) return
+    let normalized: string
+    try { normalized = normalizeQuestion(question) } catch (cause) { setError(cause instanceof Error ? cause.message : 'Revise sua pergunta.'); inputRef.current?.focus(); return }
+    sending.current = true
+    setPending(true); setError(null); setFeedback(''); setQuestion(normalized); setSelectedId(null)
+    try {
+      const answer = await askQuestion(normalized)
+      const entry = { id: crypto.randomUUID(), pergunta: normalized, answer }
+      setEntries(previous => [entry, ...previous]); setSelectedId(entry.id)
+      setFeedback('Resposta recebida. Leia o resultado abaixo.')
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Não foi possível concluir a consulta.') }
+    finally { sending.current = false; setPending(false) }
   }
-
-  const showingResult = pending !== null || !!active
-  const form = <QuestionForm value={pergunta} onChange={value => { setPergunta(value); setValidation(null) }} onSubmit={submit} loading={pending !== null} error={validation} inputRef={inputRef} followup={showingResult} />
+  useEffect(() => {
+    try { explicitTheme.current = ['light', 'dark'].includes(localStorage.getItem('cinedata-theme') ?? '') } catch { /* storage is optional */ }
+    const media = matchMedia('(prefers-color-scheme: dark)')
+    const followSystem = () => { if (!explicitTheme.current) setTheme(media.matches ? 'dark' : 'light') }
+    media.addEventListener('change', followSystem)
+    return () => media.removeEventListener('change', followSystem)
+  }, [])
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    document.documentElement.style.colorScheme = theme
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#1B1819' : '#F5F2EB')
+  }, [theme])
+  function toggleTheme() {
+    const next = theme === 'light' ? 'dark' : 'light'
+    explicitTheme.current = true
+    try { localStorage.setItem('cinedata-theme', next) } catch { /* keep theme usable */ }
+    setTheme(next)
+  }
   return <>
-    <Background paused={paused} />
-    <a href="#consulta" className="skip-link">Ir para a consulta</a>
-    <div className="app-shell">
-      <History entries={entries} activeId={activeId} open={historyOpen} onClose={() => setHistoryOpen(false)} onSelect={select} onNew={newQuestion} loading={pending !== null} paused={paused} onPause={() => setPaused(!paused)} />
-      <header className="mobile-header"><Brand /><button type="button" className="button button-secondary" aria-controls="session-drawer" aria-haspopup="dialog" aria-expanded={historyOpen} onClick={() => setHistoryOpen(true)}><Icon name="history" />Histórico</button></header>
-      <main id="consulta" tabIndex={-1} className={`main-content ${showingResult ? 'view-results' : 'view-home'}`}>
-        <div className="catalog-label"><Icon name="book" /><span>Catálogo de filmes · Somente leitura</span></div>
-        {showingResult ? <>
-          <header className="results-header"><h1>Explore o catálogo</h1><p>Respostas em português, com os dados por trás de cada consulta.</p></header>
-          <div className="results-layout">
-            <div className="consultation-column">
-              <div className="question-bubble"><Icon name="search" /><p>{active?.pergunta ?? pergunta.trim()}</p></div>
-              <div className="result-area" aria-busy={pending !== null}>{pending !== null ? <Loading startedAt={pending} /> : active && <Result key={active.id} entry={active} onEdit={() => edit(active.pergunta)} disabled={false} />}</div>
-              {form}
-            </div>
-            <aside className="catalog-auxiliary" aria-label="Explorar o catálogo">
-              <Examples onChoose={edit} disabled={pending !== null} auxiliary />
-              <div className="consultation-note"><h2>Sobre esta consulta</h2><p><Icon name="book" />O catálogo é consultado somente para leitura.</p><p><Icon name="info" />Perguntas independentes, sem memória de conversas.</p></div>
-            </aside>
-          </div>
-        </> : <div className="welcome-content">
-          <header className="intro"><BrandMark className="welcome-mark" /><h1>O que você quer<br className="desktop-break" /> descobrir?</h1><p>Explore filmes, descubra relações e encontre respostas.<br className="desktop-break" /> Pergunte em português. Os dados contam o resto.</p></header>
-          {form}
-          <Examples onChoose={edit} disabled={false} />
-        </div>}
-        <footer className="workspace-footer"><div className="bank-status"><span className="status-dot" aria-hidden="true" /><span>{bank === 'ready' ? 'Banco disponível' : bank === 'checking' ? 'Verificando banco…' : 'Banco indisponível'}</span><span className="bank-explanation">Essa verificação não verifica o Groq.</span></div><span>CineData Analytics · RocketLab</span></footer>
-        <p className="sr-only" role="status">{pending === null && active ? active.error ? 'A consulta terminou com erro.' : 'Resposta disponível na área de resultados.' : ''}</p>
+    <a className="skip-link" href="#main">Ir para o conteúdo</a>
+    <Header theme={theme} onToggleTheme={toggleTheme} onOpenHistory={() => setModal('history')} onOpenHelp={() => setModal('help')} />
+    <div className="workspace">
+      <aside className="sidebar"><History {...historyProps} /></aside>
+      <main id="main" tabIndex={-1} className="main">
+        <p className="eyebrow">CINEMA, COM EVIDÊNCIAS</p>
+        <h1>{pending ? 'Consultando o catálogo' : selected ? 'Uma nova perspectiva' : <>O cinema tem histórias.<br />Os dados também.</>}</h1>
+        {!selected && !pending && <p className="muted">Pergunte ao catálogo e leia a resposta junto das evidências que a sustentam.</p>}
+        <QuestionForm value={question} onChange={value => { setQuestion(value); setError(null) }} onSubmit={submit} pending={pending} error={error} inputRef={inputRef} />
+        {!selected && !pending && !error && <div className="examples"><p className="eyebrow muted">PERGUNTAS SUGERIDAS</p><div className="suggestions-grid">{suggestions.map(suggestion => <button key={suggestion} className="secondary" onClick={() => { setQuestion(suggestion); inputRef.current?.focus() }}>{suggestion}</button>)}</div><p className="small muted">As sugestões preenchem o campo. Você escolhe quando enviar.</p></div>}
+        {pending && <div className="loading-panel" role="status"><h2>Sua pergunta está sendo processada.</h2><p className="muted">Aguarde a resposta. O envio está temporariamente desativado.</p></div>}
+        {selected && <Result key={selected.id} answer={selected.answer} onFeedback={setFeedback} />}
+        <button className="secondary mobile-help" onClick={() => setModal('help')}>Como usar</button>
+        <p className="sr-only" aria-live="polite">{feedback.startsWith('Resposta recebida') || feedback.startsWith('Resposta reaberta') ? feedback : ''}</p>
       </main>
     </div>
+    <Modal open={modal === 'history'} title="Histórico da aba" drawer onClose={() => setModal(null)}><History {...historyProps} /></Modal>
+    <Modal open={modal === 'help'} title="Como usar o CineData" onClose={() => setModal(null)}>
+      <div className="help-content"><p>Pergunte em português sobre os filmes disponíveis no catálogo. Você escolhe quando enviar; os exemplos só preenchem o campo.</p><h3>Uma pergunta por vez</h3><p>Cada pergunta é independente. Para esclarecer ou mudar um filtro, reformule a pergunta completa e consulte novamente.</p><h3>Sua sessão</h3><p>O histórico fica nesta aba e é apagado ao recarregar. Reabrir uma resposta não envia outra consulta.</p><h3>Leia as evidências</h3><p>Abra “Ver SQL e dados” para conferir os dados recebidos e exportar o CSV de cada consulta. Resultados truncados contêm somente parte do conjunto.</p><h3>Imagens e cobertura</h3><p>Pôsteres aparecem quando há imagens nos dados de filmes. Se uma imagem faltar, o nome e os valores continuam disponíveis. O catálogo pode ter cobertura incompleta; os resultados não são uma atualização em tempo real.</p></div>
+    </Modal>
   </>
 }

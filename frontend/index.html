@@ -3,11 +3,21 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
-    <meta name="theme-color" content="#0a0d3a" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#F5F2EB" />
+    <meta name="color-scheme" content="light dark" />
     <meta name="description" content="Consulte o catálogo de filmes em português e confira respostas, dados e evidências." />
     <title>CineData Analytics</title>
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" href="/brand/logo-light.png" />
+    <script>
+      (() => {
+        let choice;
+        try { choice = localStorage.getItem('cinedata-theme'); } catch {}
+        const theme = choice === 'light' || choice === 'dark' ? choice : matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.colorScheme = theme;
+        document.querySelector('meta[name="theme-color"]').content = theme === 'dark' ? '#1B1819' : '#F5F2EB';
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

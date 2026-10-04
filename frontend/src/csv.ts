@@ -1,11 +1,18 @@
-import type { QueryEvidence, SqlValue } from './types'
+import type { Evidence, SQLValue } from './types'
 
-export function toCsv(evidence: QueryEvidence): string {
-  const escape = (value: SqlValue) => {
-    const text = value === null ? '' : String(value)
-    // Textos de catálogo podem ser interpretados como fórmulas por planilhas.
-    const safe = typeof value === 'string' && /^\s*[=+\-@\t\r\n]/.test(text) ? `'${text}` : text
-    return `"${safe.replaceAll('"', '""')}"`
-  }
-  return '\ufeff' + [evidence.colunas, ...evidence.linhas].map(row => row.map(escape).join(',')).join('\r\n') + '\r\n'
+function cell(value: SQLValue): string {
+  let text = value === null ? '' : String(value)
+  if (typeof value === 'string' && (/^[\s\uFEFF]*[=+\-@]/u.test(text) || /^[\t\r\n]/u.test(text))) text = "'" + text
+  return /[",\r\n]/u.test(text) ? '"' + text.replaceAll('"', '""') + '"' : text
+}
+export function toCsv(evidence: Evidence): string {
+  return '\uFEFF' + [evidence.colunas, ...evidence.linhas].map(row => row.map(cell).join(',')).join('\r\n') + '\r\n'
+}
+export function downloadCsv(evidence: Evidence, index: number): void {
+  const url = URL.createObjectURL(new Blob([toCsv(evidence)], { type: 'text/csv;charset=utf-8' }))
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `cinedata-consulta-${index}${evidence.truncado ? '-truncada' : ''}.csv`
+  document.body.append(link)
+  try { link.click() } finally { link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000) }
 }

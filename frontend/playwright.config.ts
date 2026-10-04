@@ -12,7 +12,7 @@ export default defineConfig({
     { name: 'desktop', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 1000 } } },
     { name: 'mobile', testMatch: 'interface.spec.ts', use: { ...devices['Pixel 7'] } },
   ],
-  webServer: process.argv.some(arg => arg.includes('contract.spec.ts')) ? undefined : {
+  webServer: {
     command: 'node node_modules/vite/bin/vite.js --host 127.0.0.1', url: 'http://127.0.0.1:5173', reuseExistingServer: !process.env.CI,
   },
 })
