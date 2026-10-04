@@ -11,6 +11,7 @@ __pycache__/
 /PLANEJAMENTO_TECNICO.md
 /docs/*
 !/docs/INSTALACAO_MODELO.md
+!/docs/VALIDACAO_FINAL.md
 /Atividade GenAI - RocketLab 26.2 Perfis vdev.docx.pdf
 /tutorial-openrouter.html
 /evaluation/RESULTADOS.md
@@ -26,3 +27,5 @@ frontend/inspiracao-visual/
 /skills-lock.json
 /DESIGN-discord.md
 /.superpowers/
+/output/
+/debug.log
