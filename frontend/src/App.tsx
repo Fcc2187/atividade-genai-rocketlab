@@ -6,6 +6,8 @@ import History from './components/History'
 import Modal from './components/Modal'
 import { askQuestion, normalizeQuestion } from './api'
 import type { HistoryEntry } from './types'
+import { useElapsedTime } from './useElapsedTime'
+import { resultTitle } from './resultPresentation'
 
 const suggestions = [
   'Quais são os 5 filmes com maior bilheteria em dólares?',
@@ -21,6 +23,7 @@ export default function App() {
   const explicitTheme = useRef(false)
   const [question, setQuestion] = useState('')
   const [pending, setPending] = useState(false)
+  const elapsed = useElapsedTime(pending)
   const [error, setError] = useState<string | null>(null)
   const [entries, setEntries] = useState<HistoryEntry[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -91,11 +94,11 @@ export default function App() {
       <aside className="sidebar"><History {...historyProps} /></aside>
       <main id="main" tabIndex={-1} className="main">
         <p className="eyebrow">CINEMA, COM EVIDÊNCIAS</p>
-        <h1>{pending ? 'Consultando o catálogo' : selected ? 'Uma nova perspectiva' : <>O cinema tem histórias.<br />Os dados também.</>}</h1>
+        <h1>{pending ? 'Consultando o catálogo' : selected ? resultTitle(selected.answer) : <>O cinema tem histórias.<br />Os dados também.</>}</h1>
         {!selected && !pending && <p className="muted">Pergunte ao catálogo e leia a resposta junto das evidências que a sustentam.</p>}
         <QuestionForm value={question} onChange={value => { setQuestion(value); setError(null) }} onSubmit={submit} pending={pending} error={error} inputRef={inputRef} />
         {!selected && !pending && !error && <div className="examples"><p className="eyebrow muted">PERGUNTAS SUGERIDAS</p><div className="suggestions-grid">{suggestions.map(suggestion => <button key={suggestion} className="secondary" onClick={() => { setQuestion(suggestion); inputRef.current?.focus() }}>{suggestion}</button>)}</div><p className="small muted">As sugestões preenchem o campo. Você escolhe quando enviar.</p></div>}
-        {pending && <div className="loading-panel" role="status"><h2>Sua pergunta está sendo processada.</h2><p className="muted">Aguarde a resposta. O envio está temporariamente desativado.</p></div>}
+        {pending && <div className="loading-panel"><div role="status"><h2>Sua pergunta está sendo processada.</h2><p className="muted">Aguarde a resposta. O envio está temporariamente desativado.</p></div><p className="small muted">Tempo decorrido: {elapsed} s</p></div>}
         {selected && <Result key={selected.id} answer={selected.answer} onFeedback={setFeedback} onReformulate={reformulate} onNewQuestion={newQuestion} />}
         <button className="secondary mobile-help" onClick={() => setModal('help')}>Como usar</button>
         <p className="sr-only" aria-live="polite">{feedback.startsWith('Resposta recebida') || feedback.startsWith('Resposta reaberta') ? feedback : ''}</p>

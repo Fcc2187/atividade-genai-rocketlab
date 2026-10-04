@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { rankingAnswer, aggregateAnswer, longAnswer, statusAnswers } from './fixtures'
+import type { Answer } from '../src/types'
 
 test.describe('historico e acessibilidade', () => {
   test('reabre respostas sem POST extra e reload limpa só o histórico', async ({ page }) => {
@@ -287,6 +288,48 @@ test.describe('exportacao e copia', () => {
 })
 
 test.describe('consulta e recuperação', () => {
+  test('tempo decorrido cresce e reinicia sem enviar perguntas duplicadas', async ({ page }) => {
+    await page.clock.install()
+    let calls = 0
+    let finish!: () => void
+    await page.route('**/api/perguntas', async route => {
+      calls++
+      await new Promise<void>(resolve => { finish = resolve })
+      await route.fulfill({ json: rankingAnswer })
+    })
+    await page.goto('/')
+    const input = page.getByRole('textbox', { name: 'Sua pergunta' })
+    for (let turn = 0; turn < 2; turn++) {
+      await input.fill(`Bilheteria ${turn}`)
+      await page.getByRole('button', { name: 'Consultar →' }).click()
+      const timer = page.getByText('Tempo decorrido: 0 s', { exact: true })
+      await expect(timer).toBeVisible()
+      expect(await timer.evaluate(element => element.closest('[role="status"], [aria-live="polite"], [aria-live="assertive"]') !== null)).toBe(false)
+      await page.clock.runFor(3200)
+      await expect(page.getByText('Tempo decorrido: 3 s', { exact: true })).toBeVisible()
+      await input.press('Enter')
+      expect(calls).toBe(turn + 1)
+      await page.getByRole('button', { name: turn === 0 ? 'Ativar modo escuro' : 'Ativar modo claro' }).click()
+      finish()
+      await expect(page.getByText(rankingAnswer.resposta, { exact: true })).toBeVisible()
+      await expect(page.getByText(/Tempo decorrido:/)).toHaveCount(0)
+      await expect(page.getByRole('heading', { level: 1 })).toHaveText('Bilheteria em foco')
+    }
+  })
+
+  test('títulos editoriais dependem de uma única evidência de filmes', async ({ page }) => {
+    const popular = { ...rankingAnswer, consultas: [{ ...rankingAnswer.consultas[0], colunas: ['titulo', 'ano', 'popularidade'], linhas: [['Home', 2009, 42]] }] }
+    let answer: Answer = popular
+    await page.route('**/api/perguntas', route => route.fulfill({ json: answer }))
+    await page.goto('/')
+    const input = page.getByRole('textbox', { name: 'Sua pergunta' })
+    for (const [next, title] of [[popular, 'Popularidade em foco'], [{ ...popular, consultas: [popular.consultas[0], popular.consultas[0]] }, 'Uma nova perspectiva']] as [Answer, string][]) {
+      answer = next
+      await input.fill('Popularidade')
+      await page.getByRole('button', { name: 'Consultar →' }).click()
+      await expect(page.getByRole('heading', { level: 1 })).toHaveText(title)
+    }
+  })
   for (const [status, action] of [['esclarecimento', 'Reformular pergunta'], ['sem_dados', 'Revisar filtros'], ['recusa', 'Fazer outra pergunta']] as const) {
     test(`recuperação de ${status} preserva histórico e só consulta por envio explícito`, async ({ page }) => {
       await page.setViewportSize({ width: 320, height: 812 })
