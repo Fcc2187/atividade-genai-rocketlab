@@ -4,7 +4,35 @@ Data: 04/10/2026. Referência dos 25 casos: 30/09/2026. Modelo: `openai/gpt-oss-
 
 **Resultado final: 25 corretos, zero incorretos, zero erros e zero pendentes na última tentativa de cada caso.** A avaliação foi incremental, com a mesma versão, modelo, banco e referência temporal. A bateria principal teve 23 acertos e dois HTTP413; os casos 05 e 14 passaram em retestes manuais. Todas as tentativas continuam no histórico. As explicações foram revisadas separadamente, e o fluxo integrado foi repetido na versão atual, com filmes, pôsteres, agregação, reformulação, CSV e histórico.
 
-A pausa diagnóstica autorizada existe somente no executor local de avaliação. A API normal continua sem pausa ou retry. O resultado comprova os cenários executados; não garante disponibilidade geral do provedor ou correção de qualquer pergunta futura.
+Na fonte dessa aprovação, a pausa diagnóstica existia somente no executor local de avaliação. O backend passou posteriormente a respeitar os headers de reposição da cota; veja a validação manual abaixo. O resultado comprova os cenários executados; não garante disponibilidade geral do provedor ou correção de qualquer pergunta futura.
+
+## Ajustes após a validação manual
+
+O usuário encontrou IDs de filmes no texto da resposta e HTTP429 ao enviar perguntas consecutivas. O prompt já proibia esses IDs na explicação, mas a saída do modelo não era higienizada. Agora o backend remove chaves presentes nas evidências da narrativa, incluindo hashes de 64 caracteres com ou sem rótulo; chaves curtas só são removidas com rótulo explícito. IDs, SQL, parâmetros, métricas e URLs de pôster permanecem nas evidências.
+
+O diagnóstico anterior à correção recebeu HTTP200 na primeira chamada e HTTP429 na segunda chamada da mesma pergunta: limite de 8.000 tokens/minuto, reposição indicada em 32,257 segundos e `retry-after: 10`. A produção agora serializa chamadas por modelo/processo e aguarda `x-ratelimit-reset-tokens`, com fallback de 60 segundos se ausente ou inválido. HTTP429 não gera retry; `retry-after` bloqueia novas chamadas prematuras no mesmo processo. A espera também conta no prazo da pergunta. O frontend informa que a consulta pode aguardar a liberação da cota.
+
+Verificação posterior: **62 testes Python aprovados**, cobrindo limpeza da narrativa sem perda de evidências, perguntas seguidas e concorrentes, cancelamento durante a espera, headers ausentes e HTTP429 sem reenvio. Os 25 casos capturados de `8c559f3` preservaram respostas, evidências, avisos e vereditos em novo replay offline (`runtime/replay-manual-fixes.json`); não houve inferência Groq nesse replay. Prompt e avaliador de dados não mudaram. Relatórios futuros também registram o hash do módulo de controle de cota.
+
+`npm.cmd run verify` terminou com exit 0: typecheck, lint, build e 93 testes frontend aprovados. A primeira execução restrita travou no encerramento; somente a árvore desse teste foi encerrada, e a repetição fora da restrição concluiu. Os 25 gabaritos SQL também passaram novamente, sem truncamento; SHA-256 do SQLite original permaneceu igual.
+
+**Histórico de bloqueios antes da nova chave.** A tentativa posterior recebeu HTTP429 na primeira chamada, em 0,547 segundo, com `retry-after: 772` (aproximadamente 13 minutos naquele instante). O roteiro parou sem retry nem segunda pergunta. `runtime/manual-quota-before.json` e `runtime/manual-quota-after.json` preservam os diagnósticos; o segundo contém os hashes do agente, controle de cota e prompt. Essa tentativa não comprova o fluxo real corrigido nem identifica qual cota causou esse último bloqueio. Reinícios, outras instâncias e uso externo da conta continuam sujeitos à cota compartilhada.
+
+Reteste solicitado pelo usuário, com `QUESTION_TIMEOUT_SECONDS=600` efetivamente passado ao agente: primeira chamada HTTP429 em 0,500 segundo, `retry-after: 190`. Desta vez o diagnóstico capturou a mensagem do provedor sem chave ou ID da organização: **tokens/dia (TPD), limite 200.000, usados 196.044, solicitados 4.394**, espera indicada de 3m9,216s. O roteiro encerrou sem retry ou segunda pergunta; histórico preservado em `runtime/manual-quota-retest-tpd.json`. Esse reteste identifica a cota diária como causa dessa tentativa. O prazo de 600 segundos é o tempo máximo de processamento, não um intervalo entre consultas; seu esgotamento gera `prazo_excedido`/HTTP504, enquanto o HTTP429 do Groq gera `cota_excedida`/HTTP503 na API. Alterar o prazo não repõe tokens. A liberação indicada pelo provedor não garante saldo para todas as chamadas das duas perguntas.
+
+**Reteste real aprovado após a troca da chave.** Um processo novo carregou o `.env`, conservando o prazo de 600 segundos e o controle de cota da produção. As perguntas foram enviadas consecutivamente ao mesmo modelo, sem pausa adicional do roteiro nem retry:
+
+| Pergunta | Resultado | Tempo incluindo espera da cota |
+| --- | --- | --- |
+| 5 filmes com maior nota IMDb | Cinco filmes, notas e URLs de pôster; explicação sem IDs | 34,688 s |
+| 5 filmes com maior bilheteria USD | Cinco filmes, valores e URLs de pôster; explicação sem IDs | 72,266 s |
+
+As quatro chamadas ao Groq retornaram HTTP200; não houve HTTP429 ou timeout. O módulo de produção aguardou os resets informados (31,44 s, 38,535 s e 29,752 s) entre as chamadas. IDs, títulos, anos, URLs, métricas e ordem das duas listas coincidiram exatamente com rankings SQL independentes no SQLite original; nomes e valores narrados também foram conferidos. A narrativa usa hífen sem quebra em Spider-man, sem alterar o título original nas evidências. Fontes e resultados reais: `runtime/manual-quota-retest.json`; conferência independente: `runtime/manual-quota-retest-verified.json`. Esses dois rankings não substituem a bateria histórica de 25 casos, e este roteiro não renderizou nem baixou as imagens no navegador. A disponibilidade futura permanece sujeita às cotas do provedor.
+
+| Fonte dos ajustes manuais | SHA-256 |
+| --- | --- |
+| app/agent.py | 735d4ff76fcab5a9a9f63bb30899a31e168c0583fe8e660d1cc66bb9f1ad1ec6 |
+| app/groq_quota.py | 14aac9deed006aa6655507ed47cf6a740147af1e2a4e032abb52b16bddfbdeb6 |
 
 ## Versão e rastreabilidade
 

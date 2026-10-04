@@ -98,7 +98,7 @@ export default function App() {
         {!selected && !pending && <p className="muted">Pergunte ao catálogo e leia a resposta junto das evidências que a sustentam.</p>}
         <QuestionForm value={question} onChange={value => { setQuestion(value); setError(null) }} onSubmit={submit} pending={pending} error={error} inputRef={inputRef} />
         {!selected && !pending && !error && <div className="examples"><p className="eyebrow muted">PERGUNTAS SUGERIDAS</p><div className="suggestions-grid">{suggestions.map(suggestion => <button key={suggestion} className="secondary" onClick={() => { setQuestion(suggestion); inputRef.current?.focus() }}>{suggestion}</button>)}</div><p className="small muted">As sugestões preenchem o campo. Você escolhe quando enviar.</p></div>}
-        {pending && <div className="loading-panel"><div role="status"><h2>Sua pergunta está sendo processada.</h2><p className="muted">Aguarde a resposta. O envio está temporariamente desativado.</p></div><p className="small muted">Tempo decorrido: {elapsed} s</p></div>}
+        {pending && <div className="loading-panel"><div role="status"><h2>Sua pergunta está sendo processada.</h2><p className="muted">A consulta pode aguardar a liberação da cota do serviço. O envio está temporariamente desativado.</p></div><p className="small muted">Tempo decorrido: {elapsed} s</p></div>}
         {selected && <Result key={selected.id} answer={selected.answer} onFeedback={setFeedback} onReformulate={reformulate} onNewQuestion={newQuestion} />}
         <button className="secondary mobile-help" onClick={() => setModal('help')}>Como usar</button>
         <p className="sr-only" aria-live="polite">{feedback.startsWith('Resposta recebida') || feedback.startsWith('Resposta reaberta') ? feedback : ''}</p>

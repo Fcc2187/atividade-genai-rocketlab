@@ -94,6 +94,30 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.uso['chamadas'], 2)
         self.assertEqual(result.uso['tentativas_sql'], 1)
 
+    async def test_explicacao_remove_ids_tecnicos_preservando_filmes_e_evidencias(self):
+        add_movie_metadata(self)
+        movie_id = "beac302d3d5989736a3c635f3a75c2d7e49ead9acc31fbcbc00c49c4762640a1"
+        with closing(sqlite3.connect(self.path)) as connection, connection:
+            connection.execute("UPDATE dim_movies SET sk_movie_id=?, titulo='A Dire Strait', ano_lancamento=2022 WHERE sk_movie_id='a'", (movie_id,))
+        sql = "SELECT sk_movie_id, titulo, ano_lancamento, url_poster, 10.0 AS nota_imdb FROM dim_movies WHERE sk_movie_id=:id"
+        for suffix in (f" – ID: {movie_id}", f" – sk_movie_id: `{movie_id}`", f" – {movie_id}"):
+            with self.subTest(suffix=suffix):
+                result = await self.ask([
+                    ("consultar_sql", {"sql": sql, "parametros": {"id": movie_id}}),
+                    ("answer", {"status": "resultado", "resposta": "1. A Dire Strait (2022) – Nota IMDb: 10.0" + suffix, "avisos": []}),
+                ])
+                self.assertEqual(result.answer.resposta, "1. A Dire Strait (2022) – Nota IMDb: 10.0")
+                self.assertEqual(result.consultas[0].linhas, [[movie_id, "A Dire Strait", 2022, "https://images.example.test/home.png", 10.0]])
+                self.assertEqual(result.consultas[0].parametros, {"id": movie_id})
+                self.assertEqual(result.uso['chamadas'], 2)
+
+    async def test_explicacao_preserva_titulo_e_valores_que_nao_sao_chaves_tecnicas(self):
+        result = await self.ask([
+            ("consultar_sql", {"sql": "SELECT sk_movie_id, titulo FROM dim_movies WHERE sk_movie_id='a'", "parametros": {}}),
+            ("answer", {"status": "resultado", "resposta": "O filme a comparar é O'Brien, de 2022, nota 10.0; ID externo: desconhecido.", "avisos": []}),
+        ])
+        self.assertEqual(result.answer.resposta, "O filme a comparar é O'Brien, de 2022, nota 10.0; ID externo: desconhecido.")
+
     async def test_limite_tentativas_inclui_erros(self):
         result = await self.ask([("consultar_sql", {"sql":"SELECT inexistente FROM dim_movies","parametros":{}}), ("consultar_sql", {"sql":"SELECT titulo FROM dim_movies","parametros":{}}), model_answer()])
         self.assertEqual(result.uso["tentativas_sql"], 2)

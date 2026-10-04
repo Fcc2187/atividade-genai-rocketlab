@@ -48,6 +48,7 @@ async def evaluate(cases: list[dict], database: Path, timeout: float, output: Pa
                                       name, os.getenv("GROQ_API_KEY", ""))
     report = {"modelo":name, "provedor":"groq", "runtime_configurado":"Groq API",
               "codigo_agente_sha256":hashlib.sha256((ROOT / "app" / "agent.py").read_bytes()).hexdigest(),
+              "codigo_cota_sha256":hashlib.sha256((ROOT / "app" / "groq_quota.py").read_bytes()).hexdigest(),
               "codigo_prompts_sha256":hashlib.sha256((ROOT / "app" / "prompts.py").read_bytes()).hexdigest(),
               "codigo_avaliador_sha256":hashlib.sha256((ROOT / "evaluation" / "grading.py").read_bytes()).hexdigest(),
               "quantizacao_configurada":None, "contexto_configurado":None, "prazo_segundos":timeout,

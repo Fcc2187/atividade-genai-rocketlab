@@ -26,6 +26,7 @@ from pydantic_ai.usage import RunUsage
 
 from app.prompts import build_instructions
 from app.database import QueryEvidence, QueryInvalid, QueryRejected, QueryTimedOut, execute_readonly, read_schema
+from app.groq_quota import GroqQuotaModel
 
 
 class ProviderUnavailable(Exception):
@@ -91,7 +92,7 @@ def ensure_partial_year_warning(answer: AgentAnswer, pergunta: str,
 
 
 
-def create_groq_model(base_url: str, name: str, api_key: str) -> tuple[OpenAIChatModel, AsyncOpenAI]:
+def create_groq_model(base_url: str, name: str, api_key: str) -> tuple[GroqQuotaModel, AsyncOpenAI]:
     if base_url.rstrip("/") != "https://api.groq.com/openai/v1":
         raise ValueError("Use somente o endpoint HTTPS oficial do Groq.")
     if not api_key.strip() or not name.strip():
@@ -100,10 +101,30 @@ def create_groq_model(base_url: str, name: str, api_key: str) -> tuple[OpenAICha
     transport = httpx.AsyncClient(verify=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT),
                                  trust_env=False, follow_redirects=False)
     client = AsyncOpenAI(base_url=base_url, api_key=api_key.strip(), max_retries=0, http_client=transport)
-    model = OpenAIChatModel(name, provider=OpenAIProvider(openai_client=client),
+    model = GroqQuotaModel(OpenAIChatModel(name, provider=OpenAIProvider(openai_client=client),
                             profile={"supports_forced_tool_choice": True, "supports_json_object_output": False,
-                                     "openai_supports_strict_tool_definition": False})
+                                     "openai_supports_strict_tool_definition": False}))
+    transport.event_hooks["response"].append(model.record_response)
     return model, client
+
+
+def remove_technical_ids(text: str, consultas: list[QueryEvidence]) -> str:
+    """Limpa somente chaves presentes nas evidências; conserva os dados originais."""
+    for query in consultas:
+        for index, column in enumerate(query.colunas):
+            if not column.endswith("_id"):
+                continue
+            for row in query.linhas:
+                value = row[index]
+                if not isinstance(value, str) or not value:
+                    continue
+                label = rf"\b(?:ID(?: do filme)?|{re.escape(column)})[ \t]*:[ \t]*"
+                # Hashes longos também podem aparecer sem rótulo; chaves curtas só com rótulo.
+                if re.fullmatch(r"[0-9a-fA-F]{64}", value):
+                    label = rf"(?:{label})?"
+                pattern = rf"(?:[ \t]*[–—|;-][ \t]*)?{label}[`*]*(?<!\w){re.escape(value)}(?!\w)[`*]*"
+                text = re.sub(pattern, "", text, flags=re.I)
+    return "\n".join(line.rstrip() for line in text.splitlines()).strip()
 
 
 async def responder(pergunta: str, database_path: Path, referencia: date, model: Model, *,
@@ -189,6 +210,7 @@ async def responder(pergunta: str, database_path: Path, referencia: date, model:
             if any(item.truncado for item in state.consultas):
                 answer.avisos = (answer.avisos[:9] + ["Resultado truncado; a evidência não contém todo o conjunto."])
             answer = ensure_partial_year_warning(answer, pergunta, state.consultas, referencia)
+            answer.resposta = remove_technical_ids(answer.resposta, state.consultas) or "Consulte os dados abaixo para ver o resultado."
             reported = any(isinstance(message, ModelResponse) and message.usage.has_values() for message in result.all_messages())
     except QueryRejected:
         answer = AgentAnswer(status="recusa", resposta="A operação solicitada não é permitida no banco somente leitura.", avisos=[])

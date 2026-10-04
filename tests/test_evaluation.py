@@ -250,6 +250,7 @@ class EvaluationTests(unittest.TestCase):
         report=json.loads(self.output.read_text(encoding="utf-8"))
         self.assertIn("codigo_prompts_sha256",report)
         for key,path in (("codigo_agente_sha256",run.ROOT / "app" / "agent.py"),
+                         ("codigo_cota_sha256",run.ROOT / "app" / "groq_quota.py"),
                          ("codigo_prompts_sha256",run.ROOT / "app" / "prompts.py"),
                          ("codigo_avaliador_sha256",run.ROOT / "evaluation" / "grading.py")):
             with self.subTest(source=path.name):
