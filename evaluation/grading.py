@@ -68,6 +68,7 @@ def grade(case: dict, references: list[QueryEvidence], obtained: dict) -> tuple[
         matched = False
         for query in actual:
             aliases = {'diferenca': 'divergencia', 'qtd_avaliacoes': 'qtd_avaliacoes_usuarios',
+                       'produtora': 'nome_produtora',
                        **case.get("aliases", {})}
             query = QueryEvidence(query.sql,query.parametros,[aliases.get(name,name) for name in query.colunas],
                                   query.linhas,query.truncado)

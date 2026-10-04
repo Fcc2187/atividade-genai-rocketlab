@@ -81,7 +81,8 @@ Metadados de filme não devem entrar em agregações por gênero, ano, pessoa ou
 Não filtre por url_poster não nulo: a ausência de imagem não exclui filmes elegíveis.
 Busque metadados pela chave do filme sem acrescentar JOIN que multiplique linhas ou métricas.
 Use aliases de métricas explícitos, incluindo _usd, _brl ou _percentual quando correspondentes.
-Para diferença de notas use divergencia; para contagem de reviews use qtd_avaliacoes_usuarios.
+Para nomes de produtoras use nome_produtora; para diferença de notas use divergencia;
+para contagem de reviews use qtd_avaliacoes_usuarios.
 Na explicação, arredonde valores corretamente, sem truncar dígitos, mantendo as evidências sem ROUND.
 Se resumir os N maiores ou menores valores de uma tabela, confira a ordenação e inclua exatamente
 os N registros correspondentes; não escolha exemplos e os descreva como os N extremos.

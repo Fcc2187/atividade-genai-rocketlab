@@ -36,6 +36,18 @@ class EvaluationGradingTests(unittest.TestCase):
                 query.colunas[-1] = 'popularidade'
                 self.assertEqual(grade(case, [reference], obtained()), (True, False))
 
+    def test_alias_produtora_preserva_resultado_financeiro(self):
+        from dataclasses import asdict
+        from app.database import QueryEvidence
+        case = next(c for c in run.load_cases() if c['id'] == '11_produtora_lucro')
+        reference = QueryEvidence('ref', {}, ['sk_company_id', 'nome_produtora', 'lucro_acumulado_usd'],
+                                  [['c1', 'Marvel Studios', 100.0]], False)
+        query = QueryEvidence('sql', {}, ['produtora', 'lucro_acumulado_usd', 'qtd_filmes'],
+                              [['Marvel Studios', 100.0, 17]], False)
+        obtained = {'answer': {'status': 'resultado'}, 'consultas': [asdict(query)]}
+        self.assertEqual(grade(case, [reference], obtained), (True, True))
+        query.linhas[0][1] = 101.0
+        self.assertEqual(grade(case, [reference], {'answer': {'status': 'resultado'}, 'consultas': [asdict(query)]}), (True, False))
     def test_contagens_por_ano_em_colunas_identificadas(self):
         from dataclasses import asdict
         from app.database import QueryEvidence
