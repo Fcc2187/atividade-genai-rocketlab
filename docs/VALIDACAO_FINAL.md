@@ -1,158 +1,115 @@
 # Validação do fechamento CineData Analytics
 
-Data: 04/10/2026. Referência dos casos: 30/09/2026. Modelo configurado: `openai/gpt-oss-120b`, via Groq.
+Data: 04/10/2026. Referência dos 25 casos: 30/09/2026. Modelo: `openai/gpt-oss-120b`, via Groq.
 
-O smoke final passou nas cinco categorias e o fluxo integrado funcionou com a pausa diagnóstica autorizada. Os 25 casos foram executados de forma incremental na mesma versão: 21 corretos e quatro incorretos no grade automático, sem erros de provedor ou casos não executados no último resultado de cada caso. Três divergências são de aliases/formato, com dados equivalentes conferidos manualmente; uma alterou os dados de cobertura. A revisão manual também encontrou erro no resumo textual de margem por gênero. O aceite final permanece pendente de resolver essas divergências; os resultados não demonstram disponibilidade geral da API normal nem correção para qualquer pergunta.
+**Resultado final: 25 corretos, zero incorretos, zero erros e zero pendentes na última tentativa de cada caso.** A avaliação foi incremental, com a mesma versão, modelo, banco e referência temporal. A bateria principal teve 23 acertos e dois HTTP413; os casos 05 e 14 passaram em retestes manuais. Todas as tentativas continuam no histórico. As explicações foram revisadas separadamente, e o fluxo integrado foi repetido na versão atual, com filmes, pôsteres, agregação, reformulação, CSV e histórico.
+
+A pausa diagnóstica autorizada existe somente no executor local de avaliação. A API normal continua sem pausa ou retry. O resultado comprova os cenários executados; não garante disponibilidade geral do provedor ou correção de qualquer pergunta futura.
 
 ## Versão e rastreabilidade
 
-Versão funcional final: `d152201`, baseada em `3e133e0`. Duas correções pequenas do prompt reforçaram os metadados dos filmes e impediram sua repetição na explicação. A avaliação final usa somente essa fonte; resultados de outros hashes não compõem sua aprovação.
+Fonte da inferência e integração reais: `8c559f3`. Fonte entregue após a correção de avisos: `8d86941`. Os resultados de `d152201` e de prompts anteriores são históricos e não compõem os 25 acertos.
+
+A revisão independente encontrou um caso de borda posterior à avaliação: o décimo aviso de truncamento podia ser descartado ao acrescentar o aviso de ano parcial. `8d86941` preserva os últimos nove avisos antes de acrescentar o parcial, mantendo ambos os avisos automáticos. A regressão falhou antes e passou depois, com nove/dez avisos e 101 filmes num SQLite temporário; a suíte completa passou em 55 testes. Prompt, SQL, ferramenta e chamadas ao modelo não mudaram. As SQLs e respostas capturadas dos 25 casos foram reexecutadas pelo agente atual com modelo local de replay e SQLite original: evidências, respostas, avisos e vereditos preservados. Isso é revalidação offline, sem nova inferência; não se atribuem as chamadas Groq de `8c559f3` ao hash posterior.
 
 | Fonte | SHA-256 |
 | --- | --- |
-| app/agent.py | c5752cf046c23c77aca69318d6062b8144338f914e2ad521e64b0191a33427f1 |
-| app/prompts.py | 51c6160042a272163624ce09cbc0c44bb00658fc54a912021097963613ba15a8 |
-| SQLite original, antes | 410f5beef6ab9fb34b9044d5dd191f56f3f0dc30a56e6432386ecef0d977b012 |
-| SQLite original, depois das leituras finais | 410f5beef6ab9fb34b9044d5dd191f56f3f0dc30a56e6432386ecef0d977b012 |
+| app/agent.py, inferência e integração reais | 49fe3f254b4a324a4610d4eed09fdf802d68a4415bd2466b69123cd29c3ac021 |
+| app/agent.py, entregue e revalidado offline | faa43bfda9c72a0c6a23bedf20e933823a278ce6bfa2e91df6314a7394edf6f7 |
+| app/prompts.py | 2206c360c6699066057b082385630e6f7519b881c8956cccf0b90f0cea7c439a |
+| evaluation/grading.py | 01b2e04df442fa71db23df4e752098c365ec02b9d640a20e6319f6809287d85f |
+| SQLite original, antes e depois | 410f5beef6ab9fb34b9044d5dd191f56f3f0dc30a56e6432386ecef0d977b012 |
 
-Banco permanece local e somente leitura. Nenhuma migração, índice ou limpeza foi feita no original. Imagens vêm das URLs existentes no SQLite; ausência ou falha de download conserva o filme e suas métricas.
+Banco local, estático e somente leitura; nenhuma migração, índice ou limpeza no original. Imagens usam as URLs existentes no SQLite. Ausência ou falha de download conserva o filme e suas métricas.
+
+Fontes locais desta aprovação: `groq-final-aceite-v4-30.json`, `groq-final-aceite-reteste-05-14-30.json` e `groq-final-trace-v4-05.json`. O consolidado `groq-final-consolidado-v4.json` usa a última tentativa cronológica por caso, preserva as falhas anteriores e confere hashes, modelo, data, IDs únicos e gabaritos. O grade foi recalculado contra as referências atuais, com as tolerâncias originais. A revalidação posterior está separada em `replay-final-warning-fix.json`, com os hashes anterior/atual e os 25 resultados preservados. Relatórios brutos, logs, capturas e ferramentas diagnósticas ficam fora do Git.
+
+## Correções e revisão manual
+
+- **Cobertura do catálogo (19):** o prompt distingue catálogo completo de consultas com recorte temporal. O novo SQL não acrescenta a exclusão de lançamentos futuros; médias e contagens correspondem ao gabarito original.
+- **Aliases (11, 14 e 25):** o avaliador aceita `produtora`, `diferenca` e `qtd_avaliacoes` como equivalentes aos nomes canônicos. IDs, métricas, valores e ordem continuam conferidos; testes negativos rejeitam dados incorretos e truncamento. Nenhum gabarito foi alterado.
+- **Anos em colunas (20):** aceita somente pivot explícito `cnt_YYYY`, com exatamente os anos esperados. Confere os valores, sem preencher ausências: 2025 = 5 e 2026 = 1. Ano ausente, adicional, duplicado, valor errado ou truncamento continuam falhando.
+- **Ano parcial (06 e 20):** ambas as respostas agora têm aviso estruturado de 2026 parcial até 30/09/2026. O agente acrescenta um aviso quando a pergunta contém o ano atual e o SQL anual limita os lançamentos à referência; uma pergunta explícita sobre futuros não recebe esse aviso.
+- **Margens e explicações (03, 12 e 23):** a maior margem foi descrita como 99,999%, arredondamento correto de 99,99925279424306. O caso 12 lista os 19 gêneros na ordem da evidência, incluindo Tv Movie; o antigo resumo incorreto dos cinco menores não se repetiu. O top 5 conserva a fórmula percentual e o arredondamento observado.
+
+Os textos dos 25 casos foram conferidos contra suas evidências: moedas, notas, contagens, ordem, filtros, amostras e avisos. Recusa de escrita e esclarecimentos não executaram SQL nem inventaram fatos do catálogo. Popularidade permanece distinta de avaliações de usuários. Homônimos permanecem registros separados, e pôster nulo não exclui filmes.
+
+O grade automático avalia status e linhas, não certifica explicações. Alguns SQLs ainda agrupam gêneros somente pelo nome ou omitem desempates de agregações sem empate no banco original; os dados observados coincidem com os gabaritos. Isso não comprova aderência universal em outros bancos. A seleção de metadados de filmes é orientada pelo prompt, sem enriquecimento determinístico para toda pergunta futura.
 
 ## Verificação local
 
 | Comando / inspeção | Resultado |
 | --- | --- |
-| `.\.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests -v` | 49 testes aprovados |
-| `npm.cmd run verify` em frontend/ | 93 verificações aprovadas; typecheck, lint e build exit 0 |
-| `node node_modules/@playwright/test/cli.js install chromium` | Exit 0; Chromium da versão local disponível |
-| `.\.venv\Scripts\python.exe -X utf8 -m evaluation.run --references-only` | 25 gabaritos SQL executados no original, sem inferência |
-| Auditoria renderizada claro/escuro, 1440/390/320 px | 72 cenas, sem overflow da página ou erros JS; fontes/logos carregadas e botões >=48 px |
+| `.\.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests -v` | 55 testes aprovados na fonte entregue |
+| `npm.cmd run verify` em frontend/ | 93 testes aprovados; typecheck, lint e build exit 0 |
+| `.\.venv\Scripts\python.exe -X utf8 -m evaluation.run --references-only` | 25 gabaritos SQL executados no original, sem inferência ou truncamento |
+| Consolidação e regrade offline | 25 IDs únicos; hashes/modelo/data iguais; gabaritos atuais; histórico HTTP413 preservado |
+| Replay posterior à correção de avisos | 25 SQLs/respostas reexecutadas no agente atual; evidências e avisos idênticos; sem chamadas Groq |
+| Fluxo integrado atual | Filmes, agregação, esclarecimento/reformulação, CSV e histórico aprovados |
 
-As verificações frontend usam fixtures sintéticas. Não comprovam SQL criado pelo modelo. Novas fixtures analíticas têm pelo menos seis candidatos elegíveis para conferir top 5, filtros de margem, mínimo de notas válidas, desempates e distinção entre avaliações/popularidade.
+Os testes frontend usam fixtures sintéticas. Não comprovam SQL criado pelo modelo; essa evidência vem dos casos e fluxos reais. Fixtures analíticas com seis candidatos verificam top 5, filtros de margem, mínimo de notas válidas, desempates e distinção entre popularidade e avaliações.
 
-Revisão visual conferiu início, preenchimento, processamento, filmes, agregações, múltiplas consultas/métricas, evidências, histórico, ajuda, recuperação, títulos longos, pôsteres ausentes, truncamento e avisos extensos. Testes cobrem teclado, foco contido nos diálogos, Escape, texto 200%, rolagem interna e recuperação em 320 px. Comparação renderizada com D04 claro/escuro no [Figma aprovado](https://www.figma.com/design/w838J7ZohM6pp2n2TXZUCN/?node-id=78-206).
+A auditoria visual anterior, com a mesma interface, cobriu 72 cenas em claro/escuro e 1440/390/320 px: sem overflow da página ou erros JS, fontes/logos carregadas e botões de pelo menos 48 px. Incluiu múltiplas consultas/métricas, títulos longos, imagem ausente, truncamento, avisos extensos, teclado, diálogos, Escape, texto 200% e recuperação. O fluxo real atual foi renderizado em claro/1440 e escuro/390 e inspecionado novamente. Comparação com D04 claro/escuro no [Figma aprovado](https://www.figma.com/design/w838J7ZohM6pp2n2TXZUCN/?node-id=78-206).
 
-Adaptações: dados sempre visíveis por consulta; avisos antes dos dados; CSV fora do painel SQL; estados reais com ações; contador real; ajuda do produto. Não se afirma fidelidade pixel a pixel ou certificação WCAG. Celular físico e leitor de tela não foram avaliados.
+Dados sempre visíveis por consulta; avisos antes dos dados; CSV acessível fora do SQL; estados com ações; contador real e ajuda do produto. Não se afirma fidelidade pixel a pixel ou certificação WCAG. Celular físico e leitor de tela não foram avaliados. A otimização das logos foi dispensada como item opcional; identidade aprovada preservada.
 
-## Histórico dos bloqueios de cota
+## Protocolo e histórico do provedor
 
-Comando executado:
+O executor diagnóstico envolve `model.request` sem alterar argumentos, ferramenta, guardrails ou referências, e mantém mínimo de 30 segundos entre chamadas. Na bateria de casos há 60 segundos de espera inicial e entre perguntas. Sem retry automático. As durações abaixo incluem a pausa interna; não incluem a espera inicial/entre perguntas e não representam latência normal da API.
 
-```powershell
-.\.venv\Scripts\python.exe -X utf8 -m evaluation.run --smoke --interval 60 --output runtime/groq-final-smoke.json
-```
+Nas tentativas históricas, houve HTTP429 por TPM e TPD, inclusive com chaves recém-configuradas. Uma instrumentação local confirmou rejeição na segunda chamada de uma pergunta. A chave não foi publicada. Dez segundos de pausa foram insuficientes; o usuário autorizou o diagnóstico, posteriormente ampliado para 30 segundos. As fontes anteriores terminaram em 21/25 automáticos, com três equivalências de formato/alias e um erro real de cobertura, além de uma falha narrativa. As correções foram seguidas de uma nova bateria completa, sem reaproveitar acertos da fonte antiga.
 
-Caso `01_receita_brl`: HTTP429 / `ProviderRateLimited`, após 1,72 s. O provedor informou limite de 8.000 tokens/minuto. O relatório não identifica com segurança em qual chamada da pergunta ocorreu a rejeição. A execução interrompeu os demais casos, sem retry automático. O intervalo entre perguntas não garante disponibilidade para todas as chamadas internas.
+Na fonte atual, uma tentativa anterior à última troca de chave parou por HTTP429 diário no primeiro caso. Após a troca, a bateria v4 concluiu 25 tentativas: 23 corretos e HTTP413 nos casos 05 e 14. O reteste focado passou em 14, mas 05 voltou a receber HTTP413 (solicitação de 10.522 tokens, limite TPM de 8.000). O reteste instrumentado seguinte de 05 passou com duas chamadas, 3.839 e 5.260 tokens de entrada reportados, metadados completos e dez linhas corretas. Todos esses erros e retestes ficam registrados; não houve conversão silenciosa de falhas em sucesso.
 
-Um reteste controlado apenas de `01_receita_brl`, sem mudar código/prompt, voltou a receber HTTP429 em 1,92 s. Os cinco casos smoke não foram aprovados; a bateria completa de 25 não foi iniciada. Todos os gabaritos locais passaram. Relatórios brutos permanecem em runtime/, fora do Git; nenhuma credencial ou identificador da organização é publicado aqui.
+## Fluxo integrado real na fonte atual
 
-Naquele checkpoint, a avaliação de 25 casos e o fluxo integrado estavam pendentes. As seções seguintes registram a retomada e o resultado atual; evidências de versões anteriores não aprovam a fonte final.
-
-### Retomada com a nova chave
-
-Em 04/10/2026, a chave local foi trocada e o backend reiniciado para carregá-la. Foi conferida apenas a presença da chave e a ausência de uma chave herdada que pudesse sobrepor o `.env`; nenhuma credencial foi registrada. Essa tentativa histórica usava a fonte de `8ccb8fa`, anterior às duas correções finais do prompt.
-
-O novo smoke (`--smoke --interval 60 --output runtime/groq-final-chave-nova-smoke.json`) voltou a interromper no caso `01_receita_brl`: HTTP429, 1,72 s, limite de 8.000 tokens/minuto. A mensagem informou 3.648 usados e 4.650 solicitados. Esses números descrevem somente aquela rejeição; não identificam por si só a chamada interna. A bateria de 25 não foi iniciada.
-
-Na interface real, “Quais são os 10 filmes com maior bilheteria em dólares?” recebeu HTTP503 / `cota_excedida` em 1,83 s. Houve exatamente um POST, sem retry ou erro JavaScript. Como não houve resultado, essa execução **não comprova pôsteres**, metadados, truncamento, CSV ou histórico.
-
-“Quais são os melhores filmes?” recebeu HTTP200 / `esclarecimento` em 1,34 s, com uma chamada ao modelo e nenhuma SQL. Revisão manual: a resposta pede critério (IMDb, TMDB, popularidade, lucro) e possíveis filtros sem afirmar fatos do catálogo. “Reformular pergunta” preservou a pergunta original, devolveu foco ao campo e não enviou outro POST. Renderização real conferida em claro/1440 e escuro/390, sem overflow ou erro JavaScript. Naquele teste, o envio reformulado ainda não havia sido comprovado; ele foi conferido posteriormente no avaliador.
-
-As 25 referências SQL, os 49 testes Python e as 93 verificações do frontend (mais typecheck, lint e build) foram executados novamente com sucesso nesta retomada. A agregação real “Quantos filmes existem por gênero?” também recebeu HTTP503 / `cota_excedida`, em 2,03 s, com um POST e sem erro JavaScript; seu CSV e histórico não foram comprovados. O SHA-256 do SQLite permaneceu igual.
-
-Depois de o usuário fornecer uma chave de outra conta inicialmente sem uso, o smoke foi executado em um processo novo (`runtime/groq-final-conta-zerada-smoke.json`). Novamente houve HTTP429 no primeiro caso, em 1,88 s: TPM 8.000, usados 3.613, solicitados 4.741. Um único reteste controlado de `01_receita_brl`, com instrumentação local que registra somente número, status e uso de chamadas, localizou a rejeição: **chamada 1 bem-sucedida** (3.533 tokens de entrada e 403 de saída reportados pelo modelo); **chamada 2 HTTP429**, sem retry. A pergunta terminou em 1,89 s. Essa evidência identifica a segunda chamada apenas nesse reteste, sem reinterpretar o estágio das rejeições anteriores.
-
-Naquelas tentativas, o backend foi reiniciado para carregar a chave atual; não houve alteração de produção ou pausa no avaliador. Posteriormente o usuário autorizou a pausa diagnóstica descrita abaixo. A API normal continua sem pausa ou retry; o prompt recebeu somente as correções identificadas na avaliação.
-
-## Avaliação final com pausa autorizada
-
-O executor diagnóstico envolve `model.request` sem mudar argumentos, agente, ferramenta, guardrails ou referências. Dez segundos foram insuficientes ao incluir imagens; o intervalo mínimo foi ampliado para 30 segundos, informado ao usuário. Há também 60 segundos de espera no início de cada execução e entre perguntas. Não há retry automático.
-
-Cada duração por caso abaixo **inclui a pausa entre chamadas do modelo**. As esperas inicial e entre perguntas não entram nessa duração. São tempos diagnósticos, não latência normal da API. O CLI publicado permanece sem pausa interna; o wrapper e relatórios brutos são locais e ignorados pelo Git.
-
-| Smoke final | Categoria | Status e linhas | Segundos diagnósticos |
-| --- | --- | --- | --- |
-| 01_receita_brl | financeiro | Corretos | 33,58 |
-| 04_populares | avaliações | Corretos | 34,06 |
-| 07_ator_cinco_anos | pessoas | Corretos | 33,31 |
-| 10_filmes_genero | gêneros/produtoras | Corretos | 32,80 |
-| 13_mais_avaliacoes | engajamento | Corretos | 33,36 |
-
-Fonte local: groq-final-editorial-smoke30.json, hash final acima. Textos revisados: moedas, fontes e rankings correspondem às evidências, sem IDs ou URLs de imagem na explicação. Popularidade e contagem de avaliações permanecem distintas. Gêneros compartilham filmes; suas contagens não devem ser somadas como total do catálogo.
-
-A bateria parcial01–07 recebeu HTTP413 em05_divergencia_notas: o provedor estimou 10.412 tokens para uma solicitação, acima de8.000. Dois retestes manuais, sem mudar a fonte, passaram; o último trouxe todos os metadados e LIMIT10. Não foi capturado o SQL da primeira falha, portanto não se atribui uma causa SQL que não foi comprovada. A falha permanece registrada, sem retry automático ou conversão silenciosa em sucesso.
-
-A continuação 08–25 parou em `11_produtora_lucro` por HTTP429/TPD: limite diário 200.000, usados 197.358 e solicitados 4.431. O provedor indicou 12min52,848s naquele instante; essa espera se refere à solicitação rejeitada, não garante disponibilidade para as chamadas seguintes ou todos os casos restantes. A execução parou sem retry automático. Posteriormente, a pedido do usuário, um reteste manual do caso 11 passou em 33,41s diagnósticos: Marvel Studios, USD 14.897.936.776 em 17 filmes. A mesma versão foi mantida na retomada dos casos pendentes.
-
-### Fluxo integrado real no avaliador
-
-Uma instância temporária usou o frontend compilado, handlers originais de `app.main`, Groq e SQLite reais. A pausa foi aplicada somente ao modelo dessa instância; a API de uso normal foi preservada. As perguntas HTTP usam 04/10/2026 e os casos CLI 30/09/2026. Valores do ranking e da agregação foram conferidos independentemente no banco original.
+Frontend compilado → handlers originais de `app.main` → Groq → SQLite original, com pausa somente no modelo da instância temporária de avaliação. Não usou fixtures ou replays. Perguntas HTTP usam 04/10/2026; casos CLI usam 30/09/2026. Rankings e agregação conferidos independentemente no SQLite.
 
 | Fluxo | Resultado |
 | --- | --- |
-| Top 10 de bilheteria em USD | HTTP200, 34,32 s diagnósticos; IDs, valores e ordem corretos; título/ano/URL/métrica; dez pôsteres reais carregados |
-| Limite com imagens | 1.877 caracteres, abaixo de 12.000; dez linhas e sem truncamento |
-| Quantidade por gênero | HTTP200, 33,15 s diagnósticos; 19 gêneros e contagens/ordem corretas; sem metadados de filmes nas agregações |
-| “Quais são os melhores filmes?” | HTTP200/esclarecimento, 1,25 s; pede critério e tamanho, sem SQL ou fatos inventados |
-| Reformulação explícita | Pergunta original preservada e foco recuperado, sem envio automático; pedido completo de maior bilheteria USD retorna Avengers: Endgame, 2019, USD2,8 bilhões; 62,69 s com esperas |
-| Cópia, CSV e histórico | CSV fiel às colunas/linhas originais, cópia correta, ações sem POST extra; um envio nos resultados e dois na reformulação |
-| Renderização real | Claro/1440 e escuro/390, sem overflow ou erro JavaScript |
+| Top 10 de bilheteria USD | HTTP200, 38,22 s diagnósticos; dez filmes, IDs/valores/ordem corretos, título/ano/URL/métrica e dez pôsteres carregados; sem truncamento |
+| Quantidade por gênero | HTTP200, 33,92 s diagnósticos; 19 gêneros, contagens/ordem corretas; sem metadados de filmes nas agregações |
+| “Quais são os melhores filmes?” | HTTP200/esclarecimento, 1,05 s diagnósticos; pede critério, sem SQL ou fatos inventados |
+| Reformulação explícita | Pergunta original/foco preservados, sem envio automático; maior bilheteria USD retorna Avengers: Endgame, 2019, USD 2.800.000.000; HTTP200 em 62,83 s diagnósticos |
+| Cópia, CSV e histórico | Cópia fiel normalizando CRLF; CSV fiel a colunas e valores originais; ações sem POST extra; um envio nos resultados e dois no fluxo reformulado |
+| Renderização | Claro/1440 e escuro/390, sem overflow ou erro JS |
 
-Uma agregação foi repetida após corrigir uma seleção ambígua no roteiro de teste (sugestão e entrada do histórico tinham o mesmo nome). O produto não mudou para essa correção. A cópia foi comparada normalizando CRLF do Windows, preservando o conteúdo.
+Relatórios atuais: `real-ui-filmes-v4-network.json`, `real-ui-agregacao-v4-network.json`, `real-ui-esclarecimento-v4-network.json`; incluem os hashes da fonte. Na primeira tentativa isolada houve falha de conexão, sem resultado. Com rede no avaliador, o resultado passou, mas o navegador isolado não carregou as imagens; a nova execução do fluxo com rede no navegador carregou os dez pôsteres. Essas tentativas permanecem separadas dos fluxos aprovados. Replays históricos de popularidade conferiram fallback, sem chamar a API, e não compõem a integração real atual.
 
-Separadamente, replays identificados dos retornos reais verificaram imagens ausentes de popularidade: cinco filmes preservados, duas imagens carregadas e três fallbacks. Os replays não chamam a API; os fluxos HTTP da tabela acima foram reais.
+## Reprodução e entrega
 
-### Revisão manual e limites
+Uma cópia limpa de `8ccb8fa`, anterior às últimas correções do agente/prompt/avaliador, foi instalada com banco e `.env` fornecidos localmente. Python 3.12.14, 34 dependências fixadas, `uv pip check` e `npm.cmd ci` passaram; 49 testes Python e 93 testes frontend, typecheck, lint e build passaram naquela cópia. Health retornou 200, entrada vazia 422 e a primeira consulta real retornou 95.645 filmes via HTTP200 em 1,83 s, sem pausa. Essa evidência comprova o procedimento de instalação naquela fonte; as verificações e a integração da fonte atual estão acima.
 
-O grade automático avalia status e linhas, não certifica explicações. No caso de maior margem, o valor SQL é 99,99925279424306%; o texto escreveu 99,99%, embora o arredondamento a duas casas seja 100,00%. É uma imprecisão da explicação; a apresentação determinística, a evidência e o CSV preservam o valor correto. Nenhum gabarito foi alterado para ocultar isso.
-
-Na média anual, valores e amostras estão corretos e o texto declara 2026 parcial, mas `avisos` veio vazio apesar da instrução. Essa execução não comprova o alerta estruturado de ano parcial. Na média de lucro por gênero, a ordenação SQL omitiu desempates por nome/chave; as médias do banco original são distintas e o resultado observado está correto. Essas limitações de aderência às instruções ficam separadas do acerto dos dados.
-
-Na retomada, o caso 12 trouxe as 19 margens e amostras corretas, mas o texto dos cinco gêneros com menores margens omitiu Tv Movie e incluiu Thriller. A tabela está correta; esse resumo textual não passou na revisão manual.
-
-O caso 14 foi marcado incorreto pelo avaliador porque a métrica veio com alias `diferenca`, não declarado entre os aliases aceitos. Uma comparação independente confirmou os 10 IDs, títulos, notas, diferenças e ordem dentro das tolerâncias originais. O caso 20 retornou uma linha com duas colunas, em vez de duas linhas por ano; a conferência manual confirmou 2025 = 5 e 2026 = 1. O caso 25 usou `qtd_avaliacoes` em vez de `qtd_avaliacoes_usuarios`; os cinco IDs, títulos, contagens e ordem foram conferidos exatamente. Os três mantêm o veredito automático original. Em 20, o texto delimitou 30/09/2026, porém faltou explicitar ano parcial e `avisos` veio vazio.
-
-O caso 19 apresentou divergência real de dados: acrescentou filtro de lançamento até 30/09/2026 à cobertura por gênero, enquanto o gabarito considera todo o catálogo. Isso mudou médias e contagens em Action, Adventure, Comedy, Drama e Romance. Não é equivalência de formato; permanece uma falha de aceite. Os gabaritos e o prompt não foram modificados durante a retomada.
-
-As tentativas anteriores da API normal tiveram rejeições de cota; esta rodada com pausas não comprova sua disponibilidade geral. O prompt orienta a seleção de imagens; não existe enriquecimento determinístico que garanta esses campos para toda pergunta futura. As logos originais foram mantidas; sua otimização é opcional.
-
-## Reprodução e demonstração
-
-Uma cópia limpa dos arquivos Git foi extraída de `8ccb8fa`, com `.env` e banco fornecidos localmente. `uv venv --python 3.12.14 .venv`, instalação das 34 dependências fixadas e `uv pip check` passaram. `npm.cmd ci` instalou 175 pacotes pelo lockfile, sem vulnerabilidades reportadas nessa execução. Nessa cópia, Python passou em 49 testes e o frontend em 93 verificações, typecheck, lint e build. O backend iniciou com a configuração documentada; foi usada porta 8001 porque a 8000 já estava ocupada, sem interromper o servidor existente. `/health` retornou 200 e entrada vazia retornou 422.
-
-Primeira pergunta real por HTTP: “Quantos filmes existem no catálogo?” retornou 200 / resultado, 95.645 filmes, em 1,83 s; duas chamadas Groq, 7.143 tokens de entrada, 102 de saída e uma tentativa SQL. Essa execução normal da API não teve pausa diagnóstica. É evidência de execução na cópia limpa, não aprovação dos 25 casos ou do fluxo de pôsteres.
-
-Preparação da demo: pergunta de filmes → resposta/lista ou tabela → valores originais e SQL → CSV → reabertura do histórico. Uma consulta reformulada deve conter todo o contexto necessário.
-
-Entrega: [repositório](https://github.com/Fcc2187/atividade-genai-rocketlab). README descreve instalação, chave local, banco fornecido, servidores e checks. Não há deploy público.
+Demo: pergunta de filmes → resposta e lista/tabela → valores originais e SQL → CSV → reabertura do histórico. Reformulação inclui todo o contexto necessário. README documenta instalação, chave local, banco, servidores e checks. [Repositório da entrega](https://github.com/Fcc2187/atividade-genai-rocketlab); não há deploy público. Credenciais, banco e artefatos locais ficam fora do Git.
 
 ## Resultado por caso
 
-Avaliação incremental de uma única versão: **21 corretos, 4 incorretos, 0 erros e 0 pendentes**. Falhas anteriores permanecem no histórico, incluindo HTTP413 inicial no caso05 e HTTP429 diário no caso11, que passou no reteste manual. Fontes locais: smoke final, bateria parcial01–07, retestes05, continuação08–25, reteste11 e retomada dos pendentes; mesmos hashes/modelo/data. Não foi uma única bateria ininterrupta.
+Última tentativa de cada caso, fonte `8c559f3`: **25 corretos, 0 incorretos, 0 erros e 0 pendentes**. Avaliação incremental, com revisão textual separada e histórico de falhas preservado.
 
-| Caso | Categoria | Gabarito SQLite | Status/linhas automáticos | Segundos diagnósticos |
+| Caso | Categoria | Gabarito SQLite | Status/linhas | Segundos diagnósticos |
 | --- | --- | --- | --- | --- |
-| 01_receita_brl | financeiro | Executado sem truncamento | Corretos | 33,25 |
-| 02_lucro_genero | financeiro | Executado sem truncamento | Corretos | 33,77 |
-| 03_maior_margem | financeiro | Executado sem truncamento | Corretos | 33,08 |
-| 04_populares | avaliacoes | Executado sem truncamento | Corretos | 32,56 |
-| 05_divergencia_notas | avaliacoes | Executado sem truncamento | Corretos no último reteste; HTTP413 inicial registrado | 33,64 |
-| 06_nota_ano | avaliacoes | Executado sem truncamento | Corretos | 34,39 |
-| 07_ator_cinco_anos | pessoas | Executado sem truncamento | Corretos | 33,19 |
-| 08_diretor_nota | pessoas | Executado sem truncamento | Corretos | 33,83 |
-| 09_par_ator_diretor | pessoas | Executado sem truncamento | Corretos | 33,36 |
-| 10_filmes_genero | generos_produtoras | Executado sem truncamento | Corretos | 32,78 |
-| 11_produtora_lucro | generos_produtoras | Executado sem truncamento | Corretos no reteste; HTTP429 inicial registrado | 33,41 |
-| 12_margem_genero | generos_produtoras | Executado sem truncamento | Corretos; erro narrativo separado na revisão manual | 33,92 |
-| 13_mais_avaliacoes | engajamento | Executado sem truncamento | Corretos | 33,36 |
-| 14_usuarios_imdb | engajamento | Executado sem truncamento | Incorretos no grade; dados equivalentes conferidos manualmente | 34,11 |
-| 15_sem_dados | seguranca | Executado sem truncamento | Corretos | 32,39 |
-| 16_escrita | seguranca | Executado sem truncamento | Corretos | 1,16 |
-| 17_melhores | avaliacoes | Executado sem truncamento | Corretos | 1,23 |
-| 18_titulo_ambiguo | pessoas | Executado sem truncamento | Corretos | 1,33 |
-| 19_cobertura | avaliacoes | Executado sem truncamento | Incorretos; filtro temporal mudou os dados | 34,48 |
-| 20_anos_parciais | generos_produtoras | Executado sem truncamento | Incorretos no grade; dados equivalentes conferidos manualmente | 33,27 |
-| 21_futuros | generos_produtoras | Executado sem truncamento | Corretos | 32,27 |
-| 22_pessoa_ambigua | pessoas | Executado sem truncamento | Corretos | 1,81 |
-| 23_margem_top5 | financeiro | Executado sem truncamento | Corretos | 33,11 |
-| 24_diretores_top5 | pessoas | Executado sem truncamento | Corretos | 33,48 |
-| 25_avaliacoes_top5 | engajamento | Executado sem truncamento | Incorretos no grade; dados equivalentes conferidos manualmente | 33,33 |
+| 01_receita_brl | financeiro | Sem truncamento | Corretos | 33,50 |
+| 02_lucro_genero | financeiro | Sem truncamento | Corretos | 34,80 |
+| 03_maior_margem | financeiro | Sem truncamento | Corretos | 32,88 |
+| 04_populares | avaliacoes | Sem truncamento | Corretos | 32,59 |
+| 05_divergencia_notas | avaliacoes | Sem truncamento | Corretos no reteste; HTTP413 anterior registrado | 33,73 |
+| 06_nota_ano | avaliacoes | Sem truncamento | Corretos | 33,03 |
+| 07_ator_cinco_anos | pessoas | Sem truncamento | Corretos | 32,97 |
+| 08_diretor_nota | pessoas | Sem truncamento | Corretos | 33,11 |
+| 09_par_ator_diretor | pessoas | Sem truncamento | Corretos | 33,23 |
+| 10_filmes_genero | generos_produtoras | Sem truncamento | Corretos | 33,36 |
+| 11_produtora_lucro | generos_produtoras | Sem truncamento | Corretos | 33,20 |
+| 12_margem_genero | generos_produtoras | Sem truncamento | Corretos | 33,27 |
+| 13_mais_avaliacoes | engajamento | Sem truncamento | Corretos | 32,64 |
+| 14_usuarios_imdb | engajamento | Sem truncamento | Corretos no reteste; HTTP413 anterior registrado | 33,33 |
+| 15_sem_dados | seguranca | Sem truncamento | Corretos | 32,02 |
+| 16_escrita | seguranca | Sem truncamento | Corretos | 1,11 |
+| 17_melhores | avaliacoes | Sem truncamento | Corretos | 1,64 |
+| 18_titulo_ambiguo | pessoas | Sem truncamento | Corretos | 0,97 |
+| 19_cobertura | avaliacoes | Sem truncamento | Corretos | 34,75 |
+| 20_anos_parciais | generos_produtoras | Sem truncamento | Corretos | 32,41 |
+| 21_futuros | generos_produtoras | Sem truncamento | Corretos | 32,56 |
+| 22_pessoa_ambigua | pessoas | Sem truncamento | Corretos | 2,02 |
+| 23_margem_top5 | financeiro | Sem truncamento | Corretos | 33,16 |
+| 24_diretores_top5 | pessoas | Sem truncamento | Corretos | 33,53 |
+| 25_avaliacoes_top5 | engajamento | Sem truncamento | Corretos | 32,36 |
