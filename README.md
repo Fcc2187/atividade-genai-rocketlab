@@ -64,6 +64,65 @@ Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8000/perguntas' -ContentTy
 
 Erros: 413 para solicitação grande demais; 422 para entrada inválida; 503 para banco/configuração/Groq indisponível ou cota excedida; 502 para resposta inválida/limite operacional; 504 para prazo. `detail` contém código e mensagem, sem chave ou detalhes internos. `solicitacao_grande_demais` identifica HTTP413 recebido do Groq e orienta pedir menos resultados ou usar filtros; esperar não reduz o tamanho. `cota_excedida` identifica HTTP429. A aplicação não repete automaticamente. [Erros oficiais](https://console.groq.com/docs/errors). Encerrar com `Ctrl+C`.
 
+## Logs do backend
+
+O terminal do backend exibe os eventos da aplicação como linhas JSON em `stderr`,
+com `timestamp` UTC, `level`, `logger`, `event` e `request_id`. Os logs próprios do
+Uvicorn continuam no formato dele: acesso HTTP e inicialização do servidor não
+substituem os eventos correlacionados do CineData.
+
+`LOG_LEVEL=INFO` é o padrão. Para diagnóstico adicional, definir `LOG_LEVEL=DEBUG`
+no `.env` e reiniciar o backend, ou usar no PowerShell antes de iniciar o Uvicorn:
+
+```powershell
+$env:LOG_LEVEL = 'DEBUG'
+.\.venv\Scripts\python.exe -X utf8 -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+Um nível inválido volta para INFO com o evento constante `log_level_invalid`, sem
+imprimir o valor recebido. O nível da aplicação não ativa DEBUG em SDKs ou clientes
+HTTP. Em INFO, sucessos de `/health` ficam ocultos; falhas continuam visíveis.
+
+Cada requisição recebe um ID gerado pelo servidor, retornado no header
+`X-Request-ID`, inclusive nos erros tratados e na validação 422. Localize esse ID
+no terminal para acompanhar `request_started`, `question_received`, as operações
+observadas e um único evento terminal: `request_completed`, `request_failed` ou
+`request_cancelled`. IDs enviados pelo cliente são ignorados. Exceções inesperadas
+são registradas com segurança e continuam propagando; a resposta 500 produzida
+pela camada externa do servidor pode não ter esse header.
+
+As durações usam relógio monotônico e são expressas em milissegundos:
+
+- `quota_lock_wait_finished` (DEBUG): espera para adquirir a trava do modelo.
+- `quota_wait_started` e `quota_wait_finished`: previsão e duração observada da
+  espera pela janela de cota; `cancelled` indica uma espera interrompida.
+- `model_request_started`, `model_request_finished` e `model_request_failed`:
+  chamadas efetivamente iniciadas, numeradas por pergunta, e tempo somente da
+  chamada, após as esperas. Tokens não informados permanecem `null`.
+- `sql_started` e `sql_finished`: execuções reais da ferramenta SQL, tentativa,
+  duração, número de linhas e truncamento. Argumentos rejeitados antes da execução
+  continuam consumindo a tentativa existente, mas não geram início SQL.
+- `sql_retry_requested`, `sql_rejected` e `quota_blocked`: correção já prevista,
+  rejeição ou bloqueio local, com códigos e categorias constantes.
+- `answer_validated`: status de domínio e número de avisos. `recusa`,
+  `esclarecimento` e `sem_dados` são respostas válidas.
+
+Estes dois JSONs são **exemplos fictícios e ilustrativos**, não resultados de uma
+execução real:
+
+```json
+{"timestamp":"2026-10-05T12:00:00+00:00","level":"INFO","logger":"cinedata","event":"request_completed","request_id":"11111111111111111111111111111111","http_status":200,"duration_ms":3200,"response_status":"resultado","chamadas":2,"tokens_entrada":null,"tokens_saida":null,"tentativas_sql":1}
+{"timestamp":"2026-10-05T12:01:00+00:00","level":"WARNING","logger":"cinedata","event":"request_failed","request_id":"22222222222222222222222222222222","http_status":503,"duration_ms":800,"code":"cota_excedida","stage":"model","exception_type":"ProviderRateLimited"}
+```
+
+Mesmo em DEBUG, essa camada omite pergunta, prompts, esquema, SQL, parâmetros,
+linhas de resultados, raciocínio, credenciais e mensagens/corpos de erros do
+provedor. Diagnóstico de exceções pode mostrar apenas arquivo, função e linha,
+sem caminhos completos, código-fonte, variáveis locais ou causas encadeadas.
+Não há opção para liberar payloads. Logs não acrescentam chamadas, consultas ou
+retries. A cota continua coordenada **por processo**; os eventos não corrigem a
+coordenação entre múltiplas instâncias. A CLI de avaliação mantém sua saída atual.
+
 ## Interface web
 
 Instalar Node.js 22.16+ na linha 22, ou 24+, e npm. Versão usada nesta implementação: Node 22.16.0 / npm 10.9.2. Com o backend configurado acima, usar dois terminais na raiz:

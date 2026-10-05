@@ -8,6 +8,7 @@ from threading import Event
 import unittest
 from unittest.mock import patch
 from tests.helpers import prepare_database, model_answer, add_movie_metadata
+from tests.test_observability import capture_events, events
 from app import agent
 
 
@@ -656,3 +657,141 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(asyncio.CancelledError):
                     await task
                 self.assertTrue(finished.is_set())
+
+    async def test_sql_events_observe_rows_truncation_and_domain_statuses(self):
+        from app.observability import request_context
+
+        for status, sql, row_count, truncated in [
+            ("resultado", "SELECT titulo FROM dim_movies", 2, False),
+            (
+                "resultado",
+                "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<101) SELECT x FROM n",
+                100,
+                True,
+            ),
+            (
+                "sem_dados",
+                "SELECT titulo FROM dim_movies WHERE titulo=:titulo",
+                0,
+                False,
+            ),
+            ("recusa", "DELETE FROM dim_movies", None, None),
+            ("esclarecimento", None, None, None),
+        ]:
+            with (
+                self.subTest(status=status, truncated=truncated),
+                capture_events() as stream,
+                request_context("sql-test"),
+            ):
+                steps = (
+                    []
+                    if sql is None
+                    else [
+                        (
+                            "consultar_sql",
+                            {
+                                "sql": sql,
+                                "parametros": {"titulo": "SECRET-VALUE"}
+                                if ":titulo" in sql
+                                else {},
+                            },
+                        )
+                    ]
+                )
+                if status != "recusa":
+                    steps.append(model_answer(status))
+                result = await self.ask(steps)
+            rows = events(stream)
+            self.assertTrue(all(r["request_id"] == "sql-test" for r in rows))
+            self.assertEqual(rows[0]["event"], "schema_loaded")
+            self.assertEqual(rows[-1]["event"], "answer_validated")
+            self.assertEqual(rows[-1]["response_status"], status)
+            self.assertEqual(rows[-1]["warnings"], len(result.answer.avisos))
+            started = [r for r in rows if r["event"] == "sql_started"]
+            finished = [r for r in rows if r["event"] == "sql_finished"]
+            self.assertEqual(len(started), 0 if sql is None else 1)
+            if row_count is not None:
+                self.assertEqual(len(finished), 1)
+                self.assertEqual(finished[0]["rows"], row_count)
+                self.assertEqual(finished[0]["truncado"], truncated)
+                self.assertGreaterEqual(finished[0]["duration_ms"], 0)
+            if status == "recusa":
+                self.assertEqual(
+                    next(r for r in rows if r["event"] == "sql_rejected")["category"],
+                    "read_only",
+                )
+                self.assertEqual(result.uso["chamadas"], 1)
+            self.assertNotIn("SECRET", stream.getvalue())
+            self.assertNotIn("dim_movies", stream.getvalue())
+            self.assertNotIn("O'Brien", stream.getvalue())
+
+    async def test_sql_retry_and_argument_failure_preserve_attempt_count(self):
+        with capture_events() as stream:
+            result = await self.ask(
+                [
+                    (
+                        "consultar_sql",
+                        {
+                            "sql": "SELECT SECRET_COLUMN FROM dim_movies",
+                            "parametros": {},
+                        },
+                    ),
+                    (
+                        "consultar_sql",
+                        {"sql": "SELECT titulo FROM dim_movies", "parametros": {}},
+                    ),
+                    model_answer(),
+                ]
+            )
+        rows = events(stream)
+        self.assertEqual(
+            [r["attempt"] for r in rows if r["event"] == "sql_started"], [1, 2]
+        )
+        retry = next(r for r in rows if r["event"] == "sql_retry_requested")
+        self.assertEqual(retry["code"], "sql_invalido")
+        self.assertEqual(retry["attempt"], 1)
+        self.assertEqual(result.uso["tentativas_sql"], 2)
+        self.assertEqual(result.uso["chamadas"], 3)
+        self.assertNotIn("SECRET", stream.getvalue())
+        with capture_events() as stream:
+            result = await self.ask(
+                [
+                    (
+                        "consultar_sql",
+                        {"sql": "SELECT :x FROM dim_movies", "parametros": {"x": True}},
+                    ),
+                    (
+                        "consultar_sql",
+                        {"sql": "SELECT titulo FROM dim_movies", "parametros": {}},
+                    ),
+                    model_answer(),
+                ]
+            )
+        self.assertEqual(
+            [r["attempt"] for r in events(stream) if r["event"] == "sql_started"], [2]
+        )
+        self.assertEqual(result.uso["tentativas_sql"], 2)
+
+    async def test_sql_deadline_emits_observed_failure_without_answer(self):
+        with capture_events() as stream, self.assertRaises(agent.QuestionTimedOut):
+            await self.ask(
+                [
+                    (
+                        "consultar_sql",
+                        {
+                            "sql": "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n) SELECT SUM(x) FROM n",
+                            "parametros": {},
+                        },
+                    )
+                ],
+                timeout_seconds=0.08,
+            )
+        rows = events(stream)
+        self.assertEqual(len([r for r in rows if r["event"] == "sql_started"]), 1)
+        self.assertEqual(
+            next(r for r in rows if r["event"] == "sql_rejected")["category"],
+            "deadline",
+        )
+        self.assertFalse(
+            any(r["event"] in {"sql_finished", "answer_validated"} for r in rows)
+        )
