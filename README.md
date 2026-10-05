@@ -8,7 +8,9 @@ Aplicação local para consultar o catálogo CineData em português, com interfa
 
 Conheça o **CineData Analytics em ação** e acompanhe o uso da aplicação em uma demonstração guiada. O vídeo complementa a documentação com uma apresentação prática da experiência de consulta.
 
-> **▶ [Abrir o vídeo instrutivo](media/2026-10-05_1050_16x9.mp4)**
+
+Uploading 2026-10-05_1050_16x9.mp4…
+
 
 ## Preparar o ambiente
 
