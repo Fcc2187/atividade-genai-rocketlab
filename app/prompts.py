@@ -70,10 +70,14 @@ Regras analíticas:
   Preserve a precisão das métricas no SQL: não use ROUND nas evidências; arredonde só a explicação.
 20 Ano civil difere da janela móvel. Nas análises de lançamentos até a referência, exclua futuros;
   em pedidos explícitos de futuros, use datas posteriores à referência.
-  Sem período ou restrição de lançamento na pergunta, considere todo o catálogo, inclusive na cobertura
-  de notas por gênero: não acrescente filtro de data. Isso difere de analisar filmes já lançados.
-  Médias anuais normalmente usam WHERE m.ano_lancamento IS NOT NULL AND m.data_lancamento<=:referencia
+  Agrupar por ano de lançamento é análise temporal: considere apenas lançamentos até a referência,
+  mesmo sem período explícito na pergunta. Inclua futuros somente quando solicitado explicitamente.
+  Sem análise temporal nem restrição de lançamento, considere todo o catálogo, inclusive na cobertura
+  de notas por gênero: não acrescente filtro de data.
+  Médias anuais, salvo pedido explícito de incluir futuros, exigem
+  WHERE m.ano_lancamento IS NOT NULL AND m.data_lancamento<=:referencia
   AND f.nota_imdb IS NOT NULL; GROUP BY m.ano_lancamento (INTEGER), AVG e COUNT; adapte a fonte pedida.
+  Nos pedidos explícitos de futuros, adapte o filtro de data ao recorte solicitado.
   Se incluir o ano da referência em uma análise temporal, mesmo como coluna, declare em avisos que é parcial;
   mencionar a data apenas em resposta não substitui esse aviso.
 Ferramenta retorna até 100 linhas e pode truncar; avise se isso ocorrer, sem totalizar a parcela truncada.
@@ -100,6 +104,10 @@ os N registros correspondentes; não escolha exemplos e os descreva como os N ex
 Na explicação em resposta, não liste chaves técnicas nem URLs de imagens; elas pertencem às evidências da interface.
 Não consulte serviço externo nem execute outra consulta só para completar imagens.
 Confira período, quantidade, metadados e filtros antes de consultar_sql; antes de finalizar, confira o resumo com as evidências.
+Antes de consultar_sql, confira: análises de lucro armazenado exigem filtros de receita e orçamento
+não nulos na moeda usada, salvo pedido explícito para incluir filmes sem esses dados, conforme a regra 6.
+A exceção padrão é lucro médio por gênero com receita informada,
+que mantém orçamento ausente e exige aviso sobre essa limitação do lucro armazenado.
 """
 
 
@@ -118,11 +126,18 @@ Sem registros elegíveis ou COUNT=0: sem_dados. Caso contrário: resultado.
 NULL significa ausente; zero informado é válido. Declare moeda: USD padrão, BRL se pedido.
 Lucro e margem não são ROI; explique os filtros e limitações indicados no SQL e nas evidências.
 Nas médias, informe a amostra de filmes com dados válidos e não trate NULL como zero.
+Se a média de lucro armazenado filtrar receita informada sem excluir orçamento ausente,
+declare em avisos que pode incluir filmes sem orçamento informado; não afirme que todos
+os lucros foram calculados com receita e orçamento disponíveis.
+Não deduza como o lucro armazenado foi calculado nem relacione lucro NULL a orçamento ausente.
 Preserve o período pedido e a data de referência. Se a análise temporal incluir o ano da
 referência, declare em avisos que é parcial até essa data; futuros explícitos são outra análise.
 Descreva apenas filtros presentes no SQL: não invente recorte até a data de referência,
 atualização de valores ou exclusões que não foram aplicados, inclusive em avisos.
 Arredonde corretamente somente a explicação. Confira o resumo com os valores recebidos.
+Não trunque: 99,999% e 99,995% arredondados a duas casas decimais são 100,00%, mesmo abaixo de 100%.
+Não calcule métricas adicionais para enriquecer o resumo. Sem porcentagem de cobertura no SQL,
+informe somente as contagens recebidas; arredondamento e formatação não alteram as evidências.
 Em listas ou rankings, inclua todos os N registros pedidos, na ordem das evidências;
 não substitua itens por exemplos ou reticências. Contagens por grupo devem mostrar todos
 os grupos retornados. O tamanho do ranking já foi definido no SQL; não reduza a lista na resposta.
@@ -134,4 +149,8 @@ Se truncado, avise e não apresente totais ou conclusões sobre o conjunto compl
 
 
 def build_final_instructions(referencia: date) -> str:
-    return f"{FINAL_RULES}\nData de referência: {referencia.isoformat()}."
+    return (
+        f"{FINAL_RULES}\nData de referência: {referencia.isoformat()}. "
+        "Essa data é contexto para análises temporais, não um filtro automático: "
+        "sem filtro de data no SQL, não diga que os resultados vão até ela."
+    )

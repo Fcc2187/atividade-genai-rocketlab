@@ -13,6 +13,28 @@ from app import agent
 
 
 class AgentTests(unittest.IsolatedAsyncioTestCase):
+    def test_calendar_between_counts_receive_explicit_partial_year_warning(self):
+        from app.database import QueryEvidence
+
+        answer = agent.AgentAnswer(
+            status="resultado",
+            resposta="1 filme em 2026",
+            avisos=["Contagem até 30/09/2026."],
+        )
+        evidence = QueryEvidence(
+            "SELECT SUM(CASE WHEN data_lancamento BETWEEN '2026-01-01' "
+            "AND :referencia THEN 1 ELSE 0 END) AS qtd_2026 FROM dim_movies",
+            {"referencia": "2026-09-30"},
+            ["qtd_2026"],
+            [[1]],
+            False,
+        )
+        adjusted = agent.ensure_partial_year_warning(
+            answer, "Quantos filmes em 2025 e 2026?", [evidence], date(2026, 9, 30)
+        )
+        self.assertTrue(any("2026 é parcial" in aviso for aviso in adjusted.avisos))
+        self.assertIn("Contagem até 30/09/2026.", adjusted.avisos)
+
     async def test_full_planning_and_correction_then_compact_finalization(self):
         from pydantic_ai.models.function import FunctionModel
         from pydantic_ai.messages import ModelResponse, ToolCallPart, ToolReturnPart
