@@ -31,6 +31,24 @@ def events(stream):
 
 
 class LoggingTests(unittest.TestCase):
+    def test_quota_metrics_sanitize_values_and_discard_sensitive_fields(self):
+        with capture_events() as stream:
+            obs.log_event(
+                logging.INFO,
+                "model_request_finished",
+                token_limit=8000,
+                remaining_tokens=float("nan"),
+                reset_tokens_ms=float("inf"),
+                cached_tokens="SECRET",
+                authorization="SECRET",
+                headers={"key": "SECRET"},
+            )
+        row = events(stream)[0]
+        self.assertEqual(row["token_limit"], 8000)
+        for name in ("remaining_tokens", "reset_tokens_ms", "cached_tokens"):
+            self.assertIsNone(row[name])
+        self.assertNotIn("SECRET", stream.getvalue())
+
     def test_json_level_and_repeated_configuration(self):
         external = logging.getLogger("httpx").level
         with capture_events("INFO") as stream:

@@ -2,7 +2,7 @@
 
 import asyncio
 from contextlib import nullcontext
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 import math
 import logging
@@ -34,13 +34,13 @@ from pydantic_ai.exceptions import (
     UnexpectedModelBehavior,
     UsageLimitExceeded,
 )
-from pydantic_ai.messages import ModelResponse
+from pydantic_ai.messages import InstructionPart, ModelResponse
 from pydantic_ai.models import Model
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.usage import RunUsage
 
-from app.prompts import build_instructions
+from app.prompts import build_final_instructions, build_instructions
 from app.database import (
     QueryEvidence,
     QueryInvalid,
@@ -269,6 +269,20 @@ async def _responder(
     state = _State(Path(database_path), time.monotonic() + timeout_seconds)
     usage = RunUsage()
     hooks = Hooks()
+
+    @hooks.on.before_model_request
+    async def prepare_final_answer(ctx, request_context):
+        if not state.consultas:
+            return request_context
+        # Planejamento/correção conservam esquema e regras completas. A finalização
+        # recebe a mesma pergunta, SQL e evidências, com instruções de apresentação.
+        parameters = replace(
+            request_context.model_request_parameters,
+            instruction_parts=[
+                InstructionPart(content=build_final_instructions(referencia))
+            ],
+        )
+        return replace(request_context, model_request_parameters=parameters)
 
     @hooks.on.before_tool_validate
     async def count_attempt(ctx, *, args, **kwargs):

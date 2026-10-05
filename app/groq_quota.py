@@ -1,4 +1,4 @@
-"""Espaça chamadas ao Groq pelos headers; não repete solicitações rejeitadas."""
+"""Respeita saldo e bloqueios do Groq; não repete solicitações rejeitadas."""
 
 import asyncio
 from asyncio import CancelledError
@@ -23,21 +23,52 @@ def duration_seconds(value: str) -> float | None:
     return seconds if math.isfinite(seconds) else None
 
 
+def token_count(value: str) -> int | None:
+    # Não aceita floats, sinal, conteúdo arbitrário nem números ilimitados.
+    if not re.fullmatch(r"[0-9]{1,18}", value):
+        return None
+    return int(value)
+
+
 class GroqQuotaModel(WrapperModel):
     def __init__(self, wrapped):
         super().__init__(wrapped)
-        # ponytail: trava por processo; várias instâncias exigem coordenação pela conta.
         self._lock = asyncio.Lock()
-        self._not_before = 0.0
+        self._token_limit = None
+        self._remaining_tokens = None
+        self._token_reset_at = 0.0
+        self._reset_tokens_ms = None
         self._blocked_until = 0.0
 
     async def record_response(self, response: httpx.Response) -> None:
         now = time.monotonic()
+        self._token_limit = token_count(
+            response.headers.get("x-ratelimit-limit-tokens", "")
+        )
+        self._remaining_tokens = token_count(
+            response.headers.get("x-ratelimit-remaining-tokens", "")
+        )
         reset = duration_seconds(response.headers.get("x-ratelimit-reset-tokens", ""))
-        self._not_before = now + (reset if reset is not None else 60)
+        self._token_reset_at = (
+            now + reset
+            if reset is not None
+            else now + 60
+            if self._remaining_tokens == 0
+            else 0.0
+        )
+        self._reset_tokens_ms = reset * 1000 if reset is not None else None
         if response.status_code == 429:
             retry = duration_seconds(response.headers.get("retry-after", "") + "s")
             self._blocked_until = now + (retry if retry is not None else 60)
+            # O bloqueio explícito é a autoridade para este erro, inclusive quando
+            # foi atingido RPM/RPD e o reset de tokens aponta para outra janela.
+            self._remaining_tokens = None
+            log_event(
+                logging.WARNING,
+                "quota_blocked",
+                remaining_ms=(self._blocked_until - now) * 1000,
+                code="cota_excedida",
+            )
 
     async def request(self, messages, model_settings, model_request_parameters):
         set_stage("quota_lock")
@@ -60,7 +91,11 @@ class GroqQuotaModel(WrapperModel):
                     self.model_name,
                     {"message": "Aguarde a reposição da cota do Groq."},
                 )
-            delay = max(0, self._not_before - time.monotonic())
+            delay = (
+                max(0, self._token_reset_at - time.monotonic())
+                if self._remaining_tokens == 0
+                else 0
+            )
             if delay:
                 set_stage("quota_wait")
                 wait_started = time.monotonic()
@@ -84,8 +119,13 @@ class GroqQuotaModel(WrapperModel):
                         duration_ms=(time.monotonic() - wait_started) * 1000,
                         cancelled=False,
                     )
-            # Também reserva uma janela quando uma falha de rede não entrega headers.
-            self._not_before = time.monotonic() + 60
+            # Saldo positivo ou desconhecido não é uma proibição de chamar.
+            # Sem estimativa confiável do custo não cacheado, o provider decide
+            # se a próxima solicitação cabe; 429 continua sem retries.
+            self._token_limit = None
+            self._remaining_tokens = None
+            self._reset_tokens_ms = None
+            self._token_reset_at = 0.0
             set_stage("model")
             context = current_context()
             call_number = None
@@ -146,5 +186,9 @@ class GroqQuotaModel(WrapperModel):
                 duration_ms=(time.monotonic() - started) * 1000,
                 tokens_entrada=response.usage.input_tokens if reported else None,
                 tokens_saida=response.usage.output_tokens if reported else None,
+                cached_tokens=response.usage.cache_read_tokens if reported else None,
+                token_limit=self._token_limit,
+                remaining_tokens=self._remaining_tokens,
+                reset_tokens_ms=self._reset_tokens_ms,
             )
             return response

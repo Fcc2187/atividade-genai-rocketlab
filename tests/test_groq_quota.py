@@ -13,6 +13,72 @@ from app.observability import request_context
 
 
 class GroqQuotaTests(unittest.IsolatedAsyncioTestCase):
+    async def test_missing_usage_does_not_create_a_wait(self):
+        def handler(request):
+            headers = {
+                "x-ratelimit-limit-tokens": "8000",
+                "x-ratelimit-remaining-tokens": "8000" if not self.sent_at else "1000",
+                "x-ratelimit-reset-tokens": "0s" if not self.sent_at else "52.5s",
+            }
+            response = self.success(request, headers, clarify=True)
+            body = response.json()
+            if len(self.sent_at) == 1:
+                body["usage"]["prompt_tokens"] = 3500
+                body["usage"]["total_tokens"] = 3505
+            elif len(self.sent_at) == 2:
+                del body["usage"]
+            return httpx.Response(200, headers=response.headers, json=body)
+
+        model, client = self.make_model(handler)
+        try:
+            with self.virtual_time():
+                for _ in range(3):
+                    await agent.responder(
+                        "Question", self.path, date(2026, 10, 5), model
+                    )
+            self.assertEqual(self.sent_at, [100, 100, 100])
+        finally:
+            await client.close()
+
+    async def test_success_does_not_reserve_previous_input_plus_generation_ceiling(
+        self,
+    ):
+        def handler(request):
+            response = self.success(
+                request,
+                {
+                    "x-ratelimit-limit-tokens": "8000",
+                    "x-ratelimit-remaining-tokens": "1000",
+                    "x-ratelimit-reset-tokens": "52.5s",
+                },
+            )
+            body = response.json()
+            body["usage"]["prompt_tokens"] = 3500
+            body["usage"]["total_tokens"] = 3505
+            return httpx.Response(200, headers=response.headers, json=body)
+
+        model, client = self.make_model(handler)
+        try:
+            with capture_events() as stream, self.virtual_time():
+                await agent.responder("Question", self.path, date(2026, 10, 5), model)
+            self.assertEqual(self.sent_at, [100, 100])
+            self.assertFalse(
+                any(r["event"] == "quota_wait_started" for r in events(stream))
+            )
+        finally:
+            await client.close()
+
+    async def test_known_empty_balance_without_reset_uses_conservative_window(self):
+        model, client = self.make_model(
+            lambda request: self.success(request, {"x-ratelimit-remaining-tokens": "0"})
+        )
+        try:
+            with self.virtual_time():
+                await agent.responder("Question", self.path, date(2026, 10, 5), model)
+            self.assertEqual(self.sent_at, [100, 160])
+        finally:
+            await client.close()
+
     async def asyncSetUp(self):
         prepare_database(self)
         self.clock = 100.0
@@ -84,6 +150,101 @@ class GroqQuotaTests(unittest.IsolatedAsyncioTestCase):
             asyncio=SimpleNamespace(Lock=asyncio.Lock, sleep=self.sleep),
         )
 
+    async def test_quota_and_cached_tokens_are_reported_without_headers_or_body(self):
+        def handler(request):
+            response = self.success(
+                request,
+                {
+                    "x-ratelimit-limit-tokens": "8000",
+                    "x-ratelimit-remaining-tokens": "4104",
+                    "x-ratelimit-reset-tokens": "28.618s",
+                    "authorization": "Bearer SECRET-KEY",
+                },
+                clarify=True,
+            )
+            body = response.json()
+            body["usage"]["prompt_tokens_details"] = {"cached_tokens": 7}
+            return httpx.Response(200, headers=response.headers, json=body)
+
+        model, client = self.make_model(handler)
+        try:
+            with capture_events() as stream, self.virtual_time():
+                await agent.responder(
+                    "SECRET-QUESTION", self.path, date(2026, 10, 5), model
+                )
+            finished = next(
+                e for e in events(stream) if e["event"] == "model_request_finished"
+            )
+            self.assertEqual(finished["token_limit"], 8000)
+            self.assertEqual(finished["remaining_tokens"], 4104)
+            self.assertEqual(finished["reset_tokens_ms"], 28618)
+            self.assertEqual(finished["cached_tokens"], 7)
+            self.assertNotIn("SECRET", stream.getvalue())
+        finally:
+            await client.close()
+
+    async def test_invalid_headers_clear_old_balance_and_do_not_invent_a_wait(self):
+        headers = [
+            {
+                "x-ratelimit-limit-tokens": "8000",
+                "x-ratelimit-remaining-tokens": "4104",
+                "x-ratelimit-reset-tokens": "30s",
+            },
+            {
+                "x-ratelimit-limit-tokens": "inf",
+                "x-ratelimit-remaining-tokens": "-1",
+                "x-ratelimit-reset-tokens": "SECRET",
+            },
+        ]
+        model, client = self.make_model(
+            lambda request: self.success(request, headers.pop(0))
+        )
+        try:
+            with capture_events() as stream, self.virtual_time():
+                await agent.responder("Pergunta", self.path, date(2026, 10, 5), model)
+            finished = [
+                e for e in events(stream) if e["event"] == "model_request_finished"
+            ]
+            self.assertIsNone(finished[1]["token_limit"])
+            self.assertIsNone(finished[1]["remaining_tokens"])
+            self.assertIsNone(finished[1]["reset_tokens_ms"])
+            self.assertEqual(self.sent_at, [100, 100])
+            self.assertNotIn("SECRET", stream.getvalue())
+        finally:
+            await client.close()
+
+    async def test_429_expires_at_retry_after_without_extra_reset_wait_or_retry(self):
+        def handler(request):
+            if not self.sent_at:
+                self.sent_at.append(self.clock)
+                return httpx.Response(
+                    429,
+                    headers={
+                        "retry-after": "10",
+                        "x-ratelimit-reset-tokens": "30s",
+                        "x-ratelimit-remaining-tokens": "0",
+                    },
+                    json={"error": {"message": "limited"}},
+                )
+            return self.success(request, {}, clarify=True)
+
+        model, client = self.make_model(handler)
+        try:
+            with capture_events() as stream, self.virtual_time():
+                with self.assertRaises(agent.ProviderRateLimited):
+                    await agent.responder("First", self.path, date(2026, 10, 5), model)
+                self.assertTrue(
+                    any(e["event"] == "quota_blocked" for e in events(stream))
+                )
+                self.clock += 10
+                result = await agent.responder(
+                    "Next", self.path, date(2026, 10, 5), model
+                )
+            self.assertEqual(self.sent_at, [100, 110])
+            self.assertEqual(result.answer.status, "esclarecimento")
+        finally:
+            await client.close()
+
     async def test_sql_success_prevents_duplicate_model_round_and_quota_wait(self):
         requests = []
 
@@ -117,7 +278,7 @@ class GroqQuotaTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result.uso["tentativas_sql"], 1)
             self.assertEqual(result.uso["tokens_entrada"], 20)
             self.assertEqual(len(result.consultas), 1)
-            self.assertEqual(self.sent_at, [100, 130])
+            self.assertEqual(self.sent_at, [100, 100])
             self.assertEqual(
                 [tool["function"]["name"] for tool in requests[1]["tools"]], ["json"]
             )
@@ -130,17 +291,22 @@ class GroqQuotaTests(unittest.IsolatedAsyncioTestCase):
                         if row["event"] == "quota_wait_started"
                     ]
                 ),
-                1,
+                0,
             )
         finally:
             await client.close()
 
-    async def test_respeita_reset_dentro_da_pergunta_e_entre_perguntas_sem_reenvio(
+    async def test_positive_balance_does_not_wait_for_reset_between_calls(
         self,
     ):
         model, client = self.make_model(
             lambda request: self.success(
-                request, {"x-ratelimit-reset-tokens": "32.257s"}
+                request,
+                {
+                    "x-ratelimit-reset-tokens": "32.257s",
+                    "x-ratelimit-limit-tokens": "8000",
+                    "x-ratelimit-remaining-tokens": "4104",
+                },
             )
         )
         try:
@@ -159,17 +325,19 @@ class GroqQuotaTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(result.consultas[0].linhas, [[2]])
                     self.assertEqual(result.uso["chamadas"], 2)
             self.assertEqual(len(self.sent_at), 4)
-            for actual, expected in zip(
-                self.sent_at, [100.0, 132.257, 164.514, 196.771]
-            ):
+            for actual, expected in zip(self.sent_at, [100.0, 100.0, 100.0, 100.0]):
                 self.assertAlmostEqual(actual, expected)
         finally:
             await client.close()
 
-    async def test_sem_header_usa_espera_conservadora_e_header_composto_e_respeitado(
+    async def test_missing_balance_does_not_invent_wait_and_exhaustion_waits(
         self,
     ):
-        headers = [{}, {"x-ratelimit-reset-tokens": "1m2.5s"}, {}]
+        headers = [
+            {},
+            {"x-ratelimit-reset-tokens": "1m2.5s", "x-ratelimit-remaining-tokens": "0"},
+            {},
+        ]
         model, client = self.make_model(
             lambda request: self.success(
                 request, headers.pop(0), clarify=len(self.sent_at) == 2
@@ -185,7 +353,7 @@ class GroqQuotaTests(unittest.IsolatedAsyncioTestCase):
                     "Outra pergunta", self.path, date(2026, 9, 30), model
                 )
                 self.assertEqual(result.answer.status, "esclarecimento")
-            self.assertEqual(self.sent_at[:3], [100.0, 160.0, 222.5])
+            self.assertEqual(self.sent_at[:3], [100.0, 100.0, 162.5])
         finally:
             await client.close()
 
@@ -218,9 +386,18 @@ class GroqQuotaTests(unittest.IsolatedAsyncioTestCase):
             await client.close()
 
     async def test_perguntas_concorrentes_compartilham_a_mesma_janela(self):
+        active = 0
+        peak = 0
+
         async def handler(request):
-            await asyncio.sleep(0)
-            return self.success(request, {"x-ratelimit-reset-tokens": "30s"})
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            try:
+                await asyncio.sleep(0)
+                return self.success(request, {"x-ratelimit-reset-tokens": "30s"})
+            finally:
+                active -= 1
 
         model, client = self.make_model(handler)
         try:
@@ -231,7 +408,8 @@ class GroqQuotaTests(unittest.IsolatedAsyncioTestCase):
                         for question in ("Primeira", "Segunda")
                     )
                 )
-            self.assertEqual(self.sent_at, [100.0, 130.0, 160.0, 190.0])
+            self.assertEqual(self.sent_at, [100.0, 100.0, 100.0, 100.0])
+            self.assertEqual(peak, 1)
             self.assertTrue(
                 all(result.consultas[0].linhas == [[2]] for result in results)
             )
@@ -302,7 +480,12 @@ class GroqQuotaTests(unittest.IsolatedAsyncioTestCase):
     async def test_cancelar_durante_espera_libera_trava_sem_enviar_request(self):
         model, client = self.make_model(
             lambda request: self.success(
-                request, {"x-ratelimit-reset-tokens": "30s"}, clarify=True
+                request,
+                {
+                    "x-ratelimit-reset-tokens": "30s",
+                    "x-ratelimit-remaining-tokens": "0",
+                },
+                clarify=True,
             )
         )
         waiting = asyncio.Event()
@@ -340,7 +523,13 @@ class GroqQuotaTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_model_events_separate_waits_calls_and_usage(self):
         def handler(request):
-            response = self.success(request, {"x-ratelimit-reset-tokens": "30s"})
+            response = self.success(
+                request,
+                {
+                    "x-ratelimit-reset-tokens": "30s",
+                    "x-ratelimit-remaining-tokens": "0",
+                },
+            )
             self.clock += 2
             return response
 
@@ -427,9 +616,13 @@ class GroqQuotaTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(failed[0]["provider_status"], status)
                 self.assertEqual(failed[0]["category"], "http")
                 if status == 429:
-                    blocked = next(r for r in rows if r["event"] == "quota_blocked")
-                    self.assertEqual(blocked["request_id"], "second")
-                    self.assertEqual(blocked["remaining_ms"], 10000)
+                    blocked = [r for r in rows if r["event"] == "quota_blocked"]
+                    self.assertEqual(
+                        [r["request_id"] for r in blocked], ["first", "second"]
+                    )
+                    self.assertEqual(
+                        [r["remaining_ms"] for r in blocked], [10000, 10000]
+                    )
                 self.assertNotIn("SECRET", stream.getvalue())
             finally:
                 await client.close()
@@ -479,7 +672,14 @@ class GroqQuotaTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_cancelled_quota_wait_is_observed_without_extra_call(self):
         model, client = self.make_model(
-            lambda request: self.success(request, {}, clarify=True)
+            lambda request: self.success(
+                request,
+                {
+                    "x-ratelimit-reset-tokens": "30s",
+                    "x-ratelimit-remaining-tokens": "0",
+                },
+                clarify=True,
+            )
         )
         waiting = asyncio.Event()
 
@@ -522,7 +722,7 @@ class GroqQuotaTests(unittest.IsolatedAsyncioTestCase):
                 len([r for r in rows if r["event"] == "model_request_started"]), 2
             )
             self.assertEqual(result.answer.status, "esclarecimento")
-            self.assertEqual(self.sent_at, [100.0, 160.0])
+            self.assertEqual(self.sent_at, [100.0, 130.0])
         finally:
             await client.close()
 
@@ -548,7 +748,13 @@ class GroqQuotaTests(unittest.IsolatedAsyncioTestCase):
                         }
                     },
                 )
-            response = self.success(request, {"x-ratelimit-reset-tokens": "30s"})
+            response = self.success(
+                request,
+                {
+                    "x-ratelimit-reset-tokens": "30s",
+                    "x-ratelimit-remaining-tokens": "0",
+                },
+            )
             self.clock += 2
             return response
 

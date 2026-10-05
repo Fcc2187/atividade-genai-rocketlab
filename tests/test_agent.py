@@ -13,6 +13,49 @@ from app import agent
 
 
 class AgentTests(unittest.IsolatedAsyncioTestCase):
+    async def test_full_planning_and_correction_then_compact_finalization(self):
+        from pydantic_ai.models.function import FunctionModel
+        from pydantic_ai.messages import ModelResponse, ToolCallPart, ToolReturnPart
+
+        instructions = []
+
+        async def respond(messages, info):
+            instructions.append(info.instructions)
+            if len(instructions) <= 2:
+                self.assertIn("Esquema real:", info.instructions)
+                self.assertIn("AS MATERIALIZED", info.instructions)
+                sql = (
+                    "SELECT inexistente FROM dim_movies"
+                    if len(instructions) == 1
+                    else "SELECT COUNT(*) AS filmes FROM dim_movies"
+                )
+                return ModelResponse(
+                    [ToolCallPart("consultar_sql", {"sql": sql, "parametros": {}})]
+                )
+            self.assertNotIn("Esquema real:", info.instructions)
+            self.assertNotIn("AS MATERIALIZED", info.instructions)
+            self.assertIn("2026-09-30", info.instructions)
+            self.assertIn("avisos", info.instructions)
+            self.assertIn("USD", info.instructions)
+            self.assertIn("parcial", info.instructions)
+            self.assertLess(len(info.instructions), len(instructions[0]) / 3)
+            self.assertEqual([t.name for t in info.function_tools], [])
+            evidence = [
+                p
+                for m in messages
+                for p in m.parts
+                if isinstance(p, ToolReturnPart) and p.tool_name == "consultar_sql"
+            ]
+            self.assertEqual(evidence[-1].content["linhas"], [[2]])
+            return ModelResponse([ToolCallPart("json", model_answer()[1])])
+
+        result = await agent.responder(
+            "Pergunta", self.path, date(2026, 9, 30), FunctionModel(respond)
+        )
+        self.assertEqual(result.uso["chamadas"], 3)
+        self.assertEqual(result.uso["tentativas_sql"], 2)
+        self.assertEqual(len(result.consultas), 1)
+
     async def asyncSetUp(self):
         prepare_database(self)
         self.agent = agent

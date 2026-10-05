@@ -37,6 +37,10 @@ _EVENT_FIELDS = {
         "duration_ms",
         "tokens_entrada",
         "tokens_saida",
+        "cached_tokens",
+        "token_limit",
+        "remaining_tokens",
+        "reset_tokens_ms",
     },
     "model_request_failed": {
         "call_number",
