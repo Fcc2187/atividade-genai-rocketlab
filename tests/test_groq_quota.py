@@ -84,6 +84,57 @@ class GroqQuotaTests(unittest.IsolatedAsyncioTestCase):
             asyncio=SimpleNamespace(Lock=asyncio.Lock, sleep=self.sleep),
         )
 
+    async def test_sql_success_prevents_duplicate_model_round_and_quota_wait(self):
+        requests = []
+
+        def handler(request):
+            body = json.loads(request.content)
+            requests.append(body)
+            response = self.success(request, {"x-ratelimit-reset-tokens": "30s"})
+            if len(requests) == 2 and any(
+                tool["function"]["name"] == "consultar_sql" for tool in body["tools"]
+            ):
+                content = response.json()
+                content["choices"][0]["message"]["tool_calls"][0]["function"] = {
+                    "name": "consultar_sql",
+                    "arguments": json.dumps(
+                        {
+                            "sql": "SELECT COUNT(*) AS filmes FROM dim_movies",
+                            "parametros": {},
+                        }
+                    ),
+                }
+                return httpx.Response(200, headers=response.headers, json=content)
+            return response
+
+        model, client = self.make_model(handler)
+        try:
+            with capture_events() as stream, self.virtual_time():
+                result = await agent.responder(
+                    "Pergunta", self.path, date(2026, 10, 5), model
+                )
+            self.assertEqual(result.uso["chamadas"], 2)
+            self.assertEqual(result.uso["tentativas_sql"], 1)
+            self.assertEqual(result.uso["tokens_entrada"], 20)
+            self.assertEqual(len(result.consultas), 1)
+            self.assertEqual(self.sent_at, [100, 130])
+            self.assertEqual(
+                [tool["function"]["name"] for tool in requests[1]["tools"]], ["json"]
+            )
+            self.assertTrue(all(body["tool_choice"] == "auto" for body in requests))
+            self.assertEqual(
+                len(
+                    [
+                        row
+                        for row in events(stream)
+                        if row["event"] == "quota_wait_started"
+                    ]
+                ),
+                1,
+            )
+        finally:
+            await client.close()
+
     async def test_respeita_reset_dentro_da_pergunta_e_entre_perguntas_sem_reenvio(
         self,
     ):

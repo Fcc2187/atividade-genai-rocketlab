@@ -352,12 +352,15 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
                     [
                         (
                             "consultar_sql",
-                            {"sql": "SELECT titulo FROM dim_movies", "parametros": {}},
+                            {
+                                "sql": "SELECT inexistente FROM dim_movies",
+                                "parametros": {},
+                            },
                         )
                     ]
                 )
             self.assertEqual(execute.call_count, 2)
-            self.assertEqual(self.calls, 3)
+            self.assertEqual(self.calls, 2)
         with self.assertRaises(self.agent.InvalidAgentResult):
             await self.ask(
                 [
@@ -492,20 +495,25 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
                 ]
             )
 
-        result = await self.ask(
-            [
-                (
-                    "consultar_sql",
-                    {
-                        "sql": "SELECT titulo FROM dim_movies WHERE sk_movie_id='a'",
-                        "parametros": {},
-                    },
-                ),
-                injected,
-            ]
-        )
-        self.assertEqual(result.answer.status, "recusa")
-        self.assertEqual(result.consultas[0].linhas, [[attack]])
+        with patch(
+            "app.agent.execute_readonly", wraps=self.db.execute_readonly
+        ) as execute:
+            with self.assertRaises(agent.InvalidAgentResult):
+                await self.ask(
+                    [
+                        (
+                            "consultar_sql",
+                            {
+                                "sql": "SELECT titulo FROM dim_movies WHERE sk_movie_id='a'",
+                                "parametros": {},
+                            },
+                        ),
+                        injected,
+                    ]
+                )
+        # A chamada de escrita não passa da ferramenta retirada após o primeiro sucesso.
+        self.assertEqual(execute.call_count, 1)
+        self.assertEqual(self.calls, 2)
         self.assertEqual(
             self.db.execute_readonly(
                 self.path, "SELECT COUNT(*) FROM dim_movies", {}
@@ -795,3 +803,173 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(
             any(r["event"] in {"sql_finished", "answer_validated"} for r in rows)
         )
+
+    async def test_sql_success_removes_tool_from_final_step(self):
+        from pydantic_ai.messages import ModelResponse, ToolCallPart, ToolReturnPart
+
+        async def finish(messages, info):
+            self.assertEqual([tool.name for tool in info.function_tools], [])
+            self.assertEqual([tool.name for tool in info.output_tools], ["json"])
+            evidence = next(
+                part
+                for message in messages
+                for part in message.parts
+                if isinstance(part, ToolReturnPart)
+            )
+            self.assertEqual(evidence.content["linhas"], [[2]])
+            return ModelResponse([ToolCallPart("json", model_answer()[1])])
+
+        result = await self.ask(
+            [
+                (
+                    "consultar_sql",
+                    {
+                        "sql": "SELECT COUNT(*) AS filmes FROM dim_movies",
+                        "parametros": {},
+                    },
+                ),
+                finish,
+            ]
+        )
+        self.assertEqual(result.uso["chamadas"], 2)
+        self.assertEqual(result.uso["tentativas_sql"], 1)
+        self.assertEqual(len(result.consultas), 1)
+
+    async def test_invalid_sql_keeps_correction_tool_then_removes_it(self):
+        from pydantic_ai.models.function import FunctionModel
+        from pydantic_ai.messages import ModelResponse, ToolCallPart
+
+        tools_seen = []
+
+        async def respond(messages, info):
+            tools_seen.append([tool.name for tool in info.function_tools])
+            if len(tools_seen) <= 2:
+                sql = (
+                    "SELECT inexistente FROM dim_movies"
+                    if len(tools_seen) == 1
+                    else "SELECT titulo FROM dim_movies"
+                )
+                return ModelResponse(
+                    [ToolCallPart("consultar_sql", {"sql": sql, "parametros": {}})]
+                )
+            return ModelResponse([ToolCallPart("json", model_answer()[1])])
+
+        result = await agent.responder(
+            "Pergunta", self.path, date(2026, 10, 5), FunctionModel(respond)
+        )
+        self.assertEqual(tools_seen, [["consultar_sql"], ["consultar_sql"], []])
+        self.assertEqual(result.uso["chamadas"], 3)
+        self.assertEqual(result.uso["tentativas_sql"], 2)
+        self.assertEqual(len(result.consultas), 1)
+
+    async def test_duplicate_sql_in_same_model_response_reuses_evidence(self):
+        from pydantic_ai.messages import ModelResponse, ToolCallPart, ToolReturnPart
+
+        sql = "SELECT :a AS numero, :b AS texto FROM dim_movies ORDER BY sk_movie_id"
+
+        async def repeat(messages, info):
+            return ModelResponse(
+                [
+                    ToolCallPart(
+                        "consultar_sql",
+                        {"sql": sql, "parametros": {"a": 1, "b": "SECRET-VALUE"}},
+                        tool_call_id="first",
+                    ),
+                    ToolCallPart(
+                        "consultar_sql",
+                        {"sql": sql, "parametros": {"b": "SECRET-VALUE", "a": 1}},
+                        tool_call_id="repeat",
+                    ),
+                ]
+            )
+
+        async def finish(messages, info):
+            evidence = [
+                part.content
+                for message in messages
+                for part in message.parts
+                if isinstance(part, ToolReturnPart)
+            ]
+            self.assertEqual(len(evidence), 2)
+            self.assertEqual(evidence[0], evidence[1])
+            self.assertEqual(
+                evidence[0]["linhas"], [[1, "SECRET-VALUE"], [1, "SECRET-VALUE"]]
+            )
+            return ModelResponse([ToolCallPart("json", model_answer()[1])])
+
+        with (
+            capture_events() as stream,
+            patch(
+                "app.agent.execute_readonly", wraps=self.db.execute_readonly
+            ) as execute,
+        ):
+            result = await self.ask([repeat, finish])
+        self.assertEqual(execute.call_count, 1)
+        self.assertEqual(len(result.consultas), 1)
+        self.assertEqual(result.uso["tentativas_sql"], 2)
+        self.assertEqual(result.uso["chamadas"], 2)
+        rows = events(stream)
+        self.assertEqual(len([row for row in rows if row["event"] == "sql_started"]), 1)
+        self.assertEqual(len([row for row in rows if row["event"] == "sql_reused"]), 1)
+        self.assertNotIn("SECRET", stream.getvalue())
+
+    async def test_second_different_sql_in_same_response_is_not_executed(self):
+        from pydantic_ai.messages import ModelResponse, ToolCallPart
+
+        for first_params, second_params in [
+            ({"value": 1}, {"value": 2}),
+            ({"value": 1}, {"value": 1.0}),
+        ]:
+
+            async def two_queries(messages, info):
+                return ModelResponse(
+                    [
+                        ToolCallPart(
+                            "consultar_sql",
+                            {
+                                "sql": "SELECT :value AS valor FROM dim_movies",
+                                "parametros": first_params,
+                            },
+                            tool_call_id="first",
+                        ),
+                        ToolCallPart(
+                            "consultar_sql",
+                            {
+                                "sql": "SELECT :value AS valor FROM dim_movies",
+                                "parametros": second_params,
+                            },
+                            tool_call_id="second",
+                        ),
+                    ]
+                )
+
+            with (
+                self.subTest(second_params=second_params),
+                patch(
+                    "app.agent.execute_readonly", wraps=self.db.execute_readonly
+                ) as execute,
+            ):
+                with self.assertRaises(agent.InvalidAgentResult):
+                    await self.ask([two_queries, model_answer()])
+            self.assertEqual(execute.call_count, 1)
+
+    async def test_model_cannot_repeat_sql_after_it_was_removed(self):
+        with patch(
+            "app.agent.execute_readonly", wraps=self.db.execute_readonly
+        ) as execute:
+            with self.assertRaises(agent.InvalidAgentResult):
+                await self.ask(
+                    [
+                        (
+                            "consultar_sql",
+                            {"sql": "SELECT titulo FROM dim_movies", "parametros": {}},
+                        ),
+                        (
+                            "consultar_sql",
+                            {"sql": "SELECT titulo FROM dim_movies", "parametros": {}},
+                        ),
+                        model_answer(),
+                    ]
+                )
+        self.assertEqual(execute.call_count, 1)
+        self.assertEqual(self.calls, 2)

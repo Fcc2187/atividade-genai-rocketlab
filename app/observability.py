@@ -46,6 +46,7 @@ _EVENT_FIELDS = {
     }
     | _ERROR_FIELDS,
     "sql_started": {"attempt"},
+    "sql_reused": {"attempt"},
     "sql_finished": {"attempt", "duration_ms", "rows", "truncado"},
     "sql_retry_requested": {"attempt", "code", "duration_ms"},
     "sql_rejected": {"attempt", "category", "duration_ms"},

@@ -104,6 +104,8 @@ As durações usam relógio monotônico e são expressas em milissegundos:
   continuam consumindo a tentativa existente, mas não geram início SQL.
 - `sql_retry_requested`, `sql_rejected` e `quota_blocked`: correção já prevista,
   rejeição ou bloqueio local, com códigos e categorias constantes.
+- `sql_reused`: uma chamada idêntica, já recebida na mesma resposta do modelo,
+  reutilizou a evidência da pergunta, sem outra execução SQL ou evidência duplicada.
 - `answer_validated`: status de domínio e número de avisos. `recusa`,
   `esclarecimento` e `sem_dados` são respostas válidas.
 
@@ -191,6 +193,10 @@ Na consulta de 01/10/2026, o plano gratuito publica 30 requisições/minuto, 100
 ## Proteção SQL
 
 Uma ferramenta de dados, `consultar_sql`, e resposta JSON com status, explicação e avisos. O modelo pode concluir pela ferramenta `json` (`ToolOutput`) ou por texto JSON; ambos são validados pelo mesmo contrato Pydantic, com `avisos` obrigatório, podendo ser vazio. Até duas tentativas SQL e três chamadas permitem obter evidências e corrigir uma consulta inválida. O Groq não permite combinar modo JSON nativo com ferramentas nessa API; respostas inválidas são rejeitadas sem extrair conteúdo de erros e sem retry da saída. Banco estático aberto com `mode=ro&immutable=1`, após verificar ausência de WAL/journal pendente. Conexões fechadas após a consulta; cancelamento interrompe e aguarda o worker.
+
+Após uma consulta SQL bem-sucedida, `consultar_sql` é retirada das ferramentas da chamada seguinte: o modelo recebe a evidência e finaliza por `json` ou texto JSON validado. O fluxo normal usa duas chamadas ao modelo, uma execução SQL e uma espera pela cota. A segunda tentativa SQL fica reservada para corrigir uma consulta inválida; esse caminho pode usar três chamadas ao modelo. Comparações e análises precisam ser resolvidas na consulta principal, por exemplo com CTEs.
+
+Se uma resposta do modelo já trouxer duas chamadas SQL idênticas, a segunda reutiliza a evidência da própria pergunta, sem executar ou guardar outra consulta. A comparação exige SQL, nomes, valores e tipos dos parâmetros iguais, independentemente da ordem das chaves. Essas chamadas continuam consumindo o limite de tentativas existente. Uma consulta diferente após sucesso, ou uma chamada à ferramenta já retirada, resulta em resposta inválida, sem retry adicional. O reaproveitamento não atravessa perguntas.
 
 Autorização SQLite permite somente dez tabelas de negócio e funções analíticas aprovadas. Escrita, DDL, anexação, PRAGMAs do modelo e metadados técnicos são bloqueados. Uma instrução por chamada, com parâmetros vinculados.
 

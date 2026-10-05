@@ -91,8 +91,8 @@ class GroqAdapterTests(unittest.IsolatedAsyncioTestCase):
                 }
                 reason = "tool_calls"
             else:
-                self.assertIn(
-                    "consultar_sql", [t["function"]["name"] for t in body["tools"]]
+                self.assertEqual(
+                    [t["function"]["name"] for t in body["tools"]], ["json"]
                 )
                 if body["tool_choice"] != "auto":
                     return httpx.Response(
