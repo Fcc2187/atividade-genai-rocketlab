@@ -26,6 +26,7 @@ def prepare_database(test_case):
         """)
     test_case.db = database
 
+
 def prepare_analytics(test_case):
     test_case.temporary = tempfile.TemporaryDirectory(prefix="cinedata-references-")
     test_case.addCleanup(test_case.temporary.cleanup)
@@ -60,14 +61,22 @@ def prepare_analytics(test_case):
 def add_movie_metadata(test_case):
     """Extend only the temporary fixture; keep the minimal schema tests intact."""
     with closing(sqlite3.connect(test_case.path)) as c, c:
-        c.execute('ALTER TABLE dim_movies ADD COLUMN ano_lancamento INTEGER')
-        c.execute('ALTER TABLE dim_movies ADD COLUMN url_poster TEXT')
-        c.execute("UPDATE dim_movies SET titulo='Home', ano_lancamento=2009, url_poster='https://images.example.test/home.png' WHERE sk_movie_id='a'")
-        c.execute("UPDATE dim_movies SET titulo='Home', ano_lancamento=2015 WHERE sk_movie_id='b'")
+        c.execute("ALTER TABLE dim_movies ADD COLUMN ano_lancamento INTEGER")
+        c.execute("ALTER TABLE dim_movies ADD COLUMN url_poster TEXT")
+        c.execute(
+            "UPDATE dim_movies SET titulo='Home', ano_lancamento=2009, url_poster='https://images.example.test/home.png' WHERE sk_movie_id='a'"
+        )
+        c.execute(
+            "UPDATE dim_movies SET titulo='Home', ano_lancamento=2015 WHERE sk_movie_id='b'"
+        )
+
 
 def query_reference(test_case, case_id):
     from app.database import execute_readonly
-    case = next(case for case in test_case.evaluation.load_cases() if case["id"] == case_id)
+
+    case = next(
+        case for case in test_case.evaluation.load_cases() if case["id"] == case_id
+    )
     reference = case["referencias"][0]
     return execute_readonly(test_case.path, reference["sql"], reference["parametros"])
 
@@ -75,20 +84,74 @@ def query_reference(test_case, case_id):
 def prepare_rankings(test_case):
     prepare_analytics(test_case)
     with closing(sqlite3.connect(test_case.path)) as c, c:
-        for table in ['bridge_movie_genre', 'bridge_movie_person', 'bridge_movie_company', 'fact_movies_performance', 'dim_movies', 'dim_people']:
-            c.execute(f'DELETE FROM {table}')
-        c.execute('CREATE TABLE dim_reviews (sk_movie_id TEXT PRIMARY KEY, qtd_avaliacoes_usuarios INTEGER, nota_media_usuarios REAL)')
-        for i, movie_id in enumerate('abcdef', 1):
-            c.execute('INSERT INTO dim_movies VALUES (?,?,?,?)', (movie_id, movie_id.upper(), '2009-01-01', 2009))
-            c.execute('INSERT INTO fact_movies_performance VALUES (?,?,?,?,?,?,?,?,?,?)', (movie_id, 100, 100 - i * 10, i * 10, 500, 500 - i * 50, i * 50, (i-1)*2, 7, 100-i*10))
-            c.execute('INSERT INTO dim_reviews VALUES (?,?,?)', (movie_id, i*10, 7))
-        for movie_id, revenue, budget in [('zero', 0, 10), ('missing', 100, None)]:
-            c.execute('INSERT INTO dim_movies VALUES (?,?,?,?)', (movie_id, movie_id, '2009-01-01', 2009))
-            c.execute('INSERT INTO fact_movies_performance (sk_movie_id, receita_usd, orcamento_usd) VALUES (?,?,?)', (movie_id, revenue, budget))
-        for person_id, name, movies in [('p0','Alpha','bcdef'), ('p1','Alpha','bcdef'), ('p2','Bravo','bcdef'), ('p3','Charlie','bcdef'), ('p4','Delta','bcdef'), ('p5','Echo','bcdef'), ('p6','Quatro','cdef'), ('p7','Cinco mas quatro válidos',['c','d','e','f','missing']), ('p8','Zero válido','abcde')]:
-            c.execute('INSERT INTO dim_people VALUES (?,?,?)', (person_id, name, 'Diretor'))
-            c.executemany('INSERT INTO bridge_movie_person VALUES (?,?)', [(movie_id, person_id) for movie_id in movies])
+        for table in [
+            "bridge_movie_genre",
+            "bridge_movie_person",
+            "bridge_movie_company",
+            "fact_movies_performance",
+            "dim_movies",
+            "dim_people",
+        ]:
+            c.execute(f"DELETE FROM {table}")
+        c.execute(
+            "CREATE TABLE dim_reviews (sk_movie_id TEXT PRIMARY KEY, qtd_avaliacoes_usuarios INTEGER, nota_media_usuarios REAL)"
+        )
+        for i, movie_id in enumerate("abcdef", 1):
+            c.execute(
+                "INSERT INTO dim_movies VALUES (?,?,?,?)",
+                (movie_id, movie_id.upper(), "2009-01-01", 2009),
+            )
+            c.execute(
+                "INSERT INTO fact_movies_performance VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (
+                    movie_id,
+                    100,
+                    100 - i * 10,
+                    i * 10,
+                    500,
+                    500 - i * 50,
+                    i * 50,
+                    (i - 1) * 2,
+                    7,
+                    100 - i * 10,
+                ),
+            )
+            c.execute("INSERT INTO dim_reviews VALUES (?,?,?)", (movie_id, i * 10, 7))
+        for movie_id, revenue, budget in [("zero", 0, 10), ("missing", 100, None)]:
+            c.execute(
+                "INSERT INTO dim_movies VALUES (?,?,?,?)",
+                (movie_id, movie_id, "2009-01-01", 2009),
+            )
+            c.execute(
+                "INSERT INTO fact_movies_performance (sk_movie_id, receita_usd, orcamento_usd) VALUES (?,?,?)",
+                (movie_id, revenue, budget),
+            )
+        for person_id, name, movies in [
+            ("p0", "Alpha", "bcdef"),
+            ("p1", "Alpha", "bcdef"),
+            ("p2", "Bravo", "bcdef"),
+            ("p3", "Charlie", "bcdef"),
+            ("p4", "Delta", "bcdef"),
+            ("p5", "Echo", "bcdef"),
+            ("p6", "Quatro", "cdef"),
+            ("p7", "Cinco mas quatro válidos", ["c", "d", "e", "f", "missing"]),
+            ("p8", "Zero válido", "abcde"),
+        ]:
+            c.execute(
+                "INSERT INTO dim_people VALUES (?,?,?)", (person_id, name, "Diretor")
+            )
+            c.executemany(
+                "INSERT INTO bridge_movie_person VALUES (?,?)",
+                [(movie_id, person_id) for movie_id in movies],
+            )
 
 
 def model_answer(status="resultado"):
-    return ("answer", {"status": status, "resposta": "Resposta baseada nas evidências.", "avisos": []})
+    return (
+        "answer",
+        {
+            "status": status,
+            "resposta": "Resposta baseada nas evidências.",
+            "avisos": [],
+        },
+    )

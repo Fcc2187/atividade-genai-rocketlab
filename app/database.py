@@ -13,18 +13,57 @@ from threading import Event
 SQLValue = str | int | float | None
 SQLParams = dict[str, SQLValue]
 
-TABLES = frozenset({
-    "dim_movies", "fact_movies_performance", "dim_people", "dim_genres",
-    "dim_companies", "dim_reviews", "movie_reviews", "bridge_movie_person",
-    "bridge_movie_genre", "bridge_movie_company",
-})
-FUNCTIONS = frozenset({
-    "count", "sum", "total", "avg", "min", "max", "abs", "round",
-    "coalesce", "ifnull", "nullif", "lower", "upper", "trim", "ltrim",
-    "rtrim", "length", "substr", "substring", "instr", "replace", "like",
-    "date", "datetime", "strftime", "julianday", "unixepoch", "iif",
-    "row_number", "rank", "dense_rank", "lag", "lead",
-})
+TABLES = frozenset(
+    {
+        "dim_movies",
+        "fact_movies_performance",
+        "dim_people",
+        "dim_genres",
+        "dim_companies",
+        "dim_reviews",
+        "movie_reviews",
+        "bridge_movie_person",
+        "bridge_movie_genre",
+        "bridge_movie_company",
+    }
+)
+FUNCTIONS = frozenset(
+    {
+        "count",
+        "sum",
+        "total",
+        "avg",
+        "min",
+        "max",
+        "abs",
+        "round",
+        "coalesce",
+        "ifnull",
+        "nullif",
+        "lower",
+        "upper",
+        "trim",
+        "ltrim",
+        "rtrim",
+        "length",
+        "substr",
+        "substring",
+        "instr",
+        "replace",
+        "like",
+        "date",
+        "datetime",
+        "strftime",
+        "julianday",
+        "unixepoch",
+        "iif",
+        "row_number",
+        "rank",
+        "dense_rank",
+        "lag",
+        "lead",
+    }
+)
 
 
 class DatabaseUnavailable(Exception):
@@ -57,10 +96,16 @@ def _connect(path: Path) -> sqlite3.Connection:
         resolved = Path(path).resolve(strict=True)
         if not resolved.is_file():
             raise DatabaseUnavailable("Banco indisponível.")
-        if any(Path(str(resolved) + suffix).exists() for suffix in ("-wal", "-journal")):
-            raise DatabaseUnavailable("Banco com escrita pendente; use uma cópia estática consistente.")
+        if any(
+            Path(str(resolved) + suffix).exists() for suffix in ("-wal", "-journal")
+        ):
+            raise DatabaseUnavailable(
+                "Banco com escrita pendente; use uma cópia estática consistente."
+            )
         # immutable só é adequado à base estática deste projeto; não usar em uma base em atualização.
-        connection = sqlite3.connect(resolved.as_uri() + "?mode=ro&immutable=1", uri=True)
+        connection = sqlite3.connect(
+            resolved.as_uri() + "?mode=ro&immutable=1", uri=True
+        )
         try:
             connection.execute("SELECT name FROM sqlite_master LIMIT 1").fetchall()
             # Ajuste da conexão somente leitura; não altera o arquivo SQLite estático.
@@ -75,22 +120,34 @@ def _connect(path: Path) -> sqlite3.Connection:
 
 def _tables(connection: sqlite3.Connection) -> dict[str, set[str]]:
     return {
-        name: {column[1].casefold() for column in connection.execute(f'PRAGMA table_info("{name}")')}
+        name: {
+            column[1].casefold()
+            for column in connection.execute(f'PRAGMA table_info("{name}")')
+        }
         for name in TABLES
-        if connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone()
+        if connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+        ).fetchone()
     }
 
 
 def read_schema(path: Path) -> str:
     """DDL com colunas/chaves das tabelas de negócio, obtido por código de confiança."""
     with closing(_connect(path)) as connection:
-        statements = connection.execute("SELECT name, sql FROM sqlite_master WHERE type='table' ORDER BY name")
+        statements = connection.execute(
+            "SELECT name, sql FROM sqlite_master WHERE type='table' ORDER BY name"
+        )
         return "\n".join(sql for name, sql in statements if name in TABLES)
 
 
 def execute_readonly(
-    path: Path, sql: str, parametros: SQLParams, *,
-    timeout_seconds: float = 20.0, deadline: float | None = None, cancel: Event | None = None,
+    path: Path,
+    sql: str,
+    parametros: SQLParams,
+    *,
+    timeout_seconds: float = 20.0,
+    deadline: float | None = None,
+    cancel: Event | None = None,
 ) -> QueryEvidence:
     """Executa uma leitura; limites contam erros e não dependem das instruções do modelo."""
     if not isinstance(sql, str) or not sql.strip() or len(sql) > 10000:
@@ -110,7 +167,11 @@ def execute_readonly(
         raise QueryInvalid("Prazo SQL inválido.")
     if deadline is not None and not math.isfinite(deadline):
         raise QueryInvalid("Prazo da pergunta inválido.")
-    expires = min(time.monotonic() + timeout_seconds, deadline if deadline is not None else math.inf)
+    expires = min(
+        time.monotonic() + timeout_seconds,
+        deadline if deadline is not None else math.inf,
+    )
+
     def interrupted():
         return time.monotonic() >= expires or cancel is not None and cancel.is_set()
 
@@ -126,12 +187,12 @@ def execute_readonly(
             nonlocal denied
             allowed = action in (sqlite3.SQLITE_SELECT, sqlite3.SQLITE_RECURSIVE)
             if action == sqlite3.SQLITE_READ:
-                allowed = (
-                    first in columns and (
-                        database == "main" and (not second or second.casefold() in columns[first])
-                        # O SQLite omite o banco/coluna no acesso otimizado de COUNT(*).
-                        or database is None and not second
-                    )
+                allowed = first in columns and (
+                    database == "main"
+                    and (not second or second.casefold() in columns[first])
+                    # O SQLite omite o banco/coluna no acesso otimizado de COUNT(*).
+                    or database is None
+                    and not second
                 )
             elif action == sqlite3.SQLITE_FUNCTION:
                 allowed = (second or "").casefold() in FUNCTIONS
@@ -161,16 +222,27 @@ def execute_readonly(
                     break
                 values: list[SQLValue] = []
                 for value in row:
-                    if isinstance(value, bytes) or (isinstance(value, float) and not math.isfinite(value)):
+                    if isinstance(value, bytes) or (
+                        isinstance(value, float) and not math.isfinite(value)
+                    ):
                         raise QueryInvalid("Resultado não representável como JSON.")
                     if isinstance(value, str) and len(value) > 2000:
                         value = value[:1999] + "…"
                         truncated = True
                     values.append(value)
-                payload = {"colunas": names, "linhas": rows + [values], "truncado": truncated}
-                if len(json.dumps(payload, ensure_ascii=False, allow_nan=False)) > 12000:
+                payload = {
+                    "colunas": names,
+                    "linhas": rows + [values],
+                    "truncado": truncated,
+                }
+                if (
+                    len(json.dumps(payload, ensure_ascii=False, allow_nan=False))
+                    > 12000
+                ):
                     if not rows:
-                        raise QueryInvalid("Resultado muito largo; selecione menos colunas ou texto.")
+                        raise QueryInvalid(
+                            "Resultado muito largo; selecione menos colunas ou texto."
+                        )
                     truncated = True
                     break
                 rows.append(values)
@@ -180,8 +252,16 @@ def execute_readonly(
                 raise QueryRejected("Operação SQL não autorizada.") from error
             if getattr(error, "sqlite_errorcode", None) == sqlite3.SQLITE_INTERRUPT:
                 raise QueryTimedOut("Prazo da consulta esgotado.") from error
-            if isinstance(error, sqlite3.ProgrammingError) and "one statement" in str(error).lower():
+            if (
+                isinstance(error, sqlite3.ProgrammingError)
+                and "one statement" in str(error).lower()
+            ):
                 raise QueryRejected("Somente uma instrução SQL é permitida.") from error
             # Só identificadores simples: ajuda a corrigir aliases sem expor SQL, valores ou caminhos.
-            diagnostic = re.fullmatch(r"(?:no such column|ambiguous column name): [A-Za-z_][A-Za-z0-9_.]{0,127}", str(error))
-            raise QueryInvalid(diagnostic[0] if diagnostic else "SQL ou parâmetros inválidos.") from error
+            diagnostic = re.fullmatch(
+                r"(?:no such column|ambiguous column name): [A-Za-z_][A-Za-z0-9_.]{0,127}",
+                str(error),
+            )
+            raise QueryInvalid(
+                diagnostic[0] if diagnostic else "SQL ou parâmetros inválidos."
+            ) from error

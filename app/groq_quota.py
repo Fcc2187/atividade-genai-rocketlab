@@ -1,4 +1,5 @@
 """Espaça chamadas ao Groq pelos headers; não repete solicitações rejeitadas."""
+
 import asyncio
 import math
 import re
@@ -37,10 +38,16 @@ class GroqQuotaModel(WrapperModel):
     async def request(self, messages, model_settings, model_request_parameters):
         async with self._lock:
             if time.monotonic() < self._blocked_until:
-                raise ModelHTTPError(429, self.model_name, {"message": "Aguarde a reposição da cota do Groq."})
+                raise ModelHTTPError(
+                    429,
+                    self.model_name,
+                    {"message": "Aguarde a reposição da cota do Groq."},
+                )
             delay = max(0, self._not_before - time.monotonic())
             if delay:
                 await asyncio.sleep(delay)
             # Também reserva uma janela quando uma falha de rede não entrega headers.
             self._not_before = time.monotonic() + 60
-            return await super().request(messages, model_settings, model_request_parameters)
+            return await super().request(
+                messages, model_settings, model_request_parameters
+            )

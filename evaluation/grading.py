@@ -6,13 +6,25 @@ import re
 from app.database import QueryEvidence
 
 
-def compare_rows(actual: QueryEvidence, expected: QueryEvidence, *, ordered: bool,
-                 abs_tol: float = 0.01, rel_tol: float = 1e-9) -> bool:
-    if actual.truncado or expected.truncado or len(actual.linhas) != len(expected.linhas):
+def compare_rows(
+    actual: QueryEvidence,
+    expected: QueryEvidence,
+    *,
+    ordered: bool,
+    abs_tol: float = 0.01,
+    rel_tol: float = 1e-9,
+) -> bool:
+    if (
+        actual.truncado
+        or expected.truncado
+        or len(actual.linhas) != len(expected.linhas)
+    ):
         return False
     if len(actual.colunas) < len(expected.colunas):
         return False
-    if len(set(actual.colunas)) != len(actual.colunas) or len(set(expected.colunas)) != len(expected.colunas):
+    if len(set(actual.colunas)) != len(actual.colunas) or len(
+        set(expected.colunas)
+    ) != len(expected.colunas):
         return False
     # Mesmos aliases permitem reordenar colunas; aliases diferentes mantêm a posição.
     if set(expected.colunas) <= set(actual.colunas):
@@ -21,7 +33,9 @@ def compare_rows(actual: QueryEvidence, expected: QueryEvidence, *, ordered: boo
         indices = list(range(len(expected.colunas)))
     else:
         return False
-    if any(len(row) != len(actual.colunas) for row in actual.linhas) or any(len(row) != len(expected.colunas) for row in expected.linhas):
+    if any(len(row) != len(actual.colunas) for row in actual.linhas) or any(
+        len(row) != len(expected.colunas) for row in expected.linhas
+    ):
         return False
     rows = [[row[index] for index in indices] for row in actual.linhas]
 
@@ -38,56 +52,100 @@ def compare_rows(actual: QueryEvidence, expected: QueryEvidence, *, ordered: boo
     # comparação quadrática limitada a 100 linhas; indexar se esse limite crescer.
     remaining = list(rows)
     for row in expected.linhas:
-        match = next((i for i, candidate in enumerate(remaining) if same_row(candidate, row)), None)
+        match = next(
+            (i for i, candidate in enumerate(remaining) if same_row(candidate, row)),
+            None,
+        )
         if match is None:
             return False
         remaining.pop(match)
     return True
 
 
-def normalize_year_counts(query: QueryEvidence, reference: QueryEvidence) -> QueryEvidence:
+def normalize_year_counts(
+    query: QueryEvidence, reference: QueryEvidence
+) -> QueryEvidence:
     """Aceita um pivot explícito cnt_YYYY sem inferir anos nem preencher ausências."""
-    if (reference.colunas != ['ano_lancamento', 'filmes'] or len(query.linhas) != 1
-            or len(set(query.colunas)) != len(query.colunas)
-            or len(query.linhas[0]) != len(query.colunas)
-            or not all(re.fullmatch(r'cnt_[0-9]{4}', name) for name in query.colunas)):
+    if (
+        reference.colunas != ["ano_lancamento", "filmes"]
+        or len(query.linhas) != 1
+        or len(set(query.colunas)) != len(query.colunas)
+        or len(query.linhas[0]) != len(query.colunas)
+        or not all(re.fullmatch(r"cnt_[0-9]{4}", name) for name in query.colunas)
+    ):
         return query
     years = [int(name[4:]) for name in query.colunas]
     if set(years) != {row[0] for row in reference.linhas}:
         return query
     rows = [[year, count] for year, count in sorted(zip(years, query.linhas[0]))]
-    return QueryEvidence(query.sql, query.parametros, reference.colunas, rows, query.truncado)
+    return QueryEvidence(
+        query.sql, query.parametros, reference.colunas, rows, query.truncado
+    )
 
 
-def grade(case: dict, references: list[QueryEvidence], obtained: dict) -> tuple[bool, bool]:
+def grade(
+    case: dict, references: list[QueryEvidence], obtained: dict
+) -> tuple[bool, bool]:
     status_ok = obtained["answer"]["status"] == case["status_esperado"]
     if case["status_esperado"] in ("esclarecimento", "recusa"):
-        return status_ok, True  # Motivo do esclarecimento/recusa ainda requer revisão manual.
+        return (
+            status_ok,
+            True,
+        )  # Motivo do esclarecimento/recusa ainda requer revisão manual.
     actual = [QueryEvidence(**query) for query in obtained["consultas"]]
     for reference in references:
         matched = False
         for query in actual:
-            aliases = {'diferenca': 'divergencia', 'qtd_avaliacoes': 'qtd_avaliacoes_usuarios',
-                       'produtora': 'nome_produtora',
-                       **case.get("aliases", {})}
-            query = QueryEvidence(query.sql,query.parametros,[aliases.get(name,name) for name in query.colunas],
-                                  query.linhas,query.truncado)
+            aliases = {
+                "diferenca": "divergencia",
+                "qtd_avaliacoes": "qtd_avaliacoes_usuarios",
+                "produtora": "nome_produtora",
+                **case.get("aliases", {}),
+            }
+            query = QueryEvidence(
+                query.sql,
+                query.parametros,
+                [aliases.get(name, name) for name in query.colunas],
+                query.linhas,
+                query.truncado,
+            )
             query = normalize_year_counts(query, reference)
             wanted = case.get("colunas_relevantes", reference.colunas)
             # Chaves não são obrigatórias no ranking; quando presentes, também são conferidas.
             selected = [
-                i for i,name in enumerate(reference.colunas)
+                i
+                for i, name in enumerate(reference.colunas)
                 if name in wanted or (name.endswith("_id") and name in query.colunas)
             ]
-            expected = QueryEvidence(reference.sql,reference.parametros,[reference.colunas[i] for i in selected],
-                                     [[row[i] for i in selected] for row in reference.linhas],reference.truncado)
+            expected = QueryEvidence(
+                reference.sql,
+                reference.parametros,
+                [reference.colunas[i] for i in selected],
+                [[row[i] for i in selected] for row in reference.linhas],
+                reference.truncado,
+            )
             candidate = query
             if not set(expected.colunas) <= set(query.colunas):
                 # Ignorar chaves extras antes do fallback por posição permite aliases equivalentes.
-                keep = [i for i,name in enumerate(query.colunas) if not name.endswith("_id") or name in expected.colunas]
-                candidate = QueryEvidence(query.sql,query.parametros,[query.colunas[i] for i in keep],
-                                          [[row[i] for i in keep] for row in query.linhas],query.truncado)
-            if compare_rows(candidate,expected,ordered=case["ordenado"],abs_tol=case["abs_tol"],rel_tol=case["rel_tol"]):
+                keep = [
+                    i
+                    for i, name in enumerate(query.colunas)
+                    if not name.endswith("_id") or name in expected.colunas
+                ]
+                candidate = QueryEvidence(
+                    query.sql,
+                    query.parametros,
+                    [query.colunas[i] for i in keep],
+                    [[row[i] for i in keep] for row in query.linhas],
+                    query.truncado,
+                )
+            if compare_rows(
+                candidate,
+                expected,
+                ordered=case["ordenado"],
+                abs_tol=case["abs_tol"],
+                rel_tol=case["rel_tol"],
+            ):
                 matched = True
                 break
         if not matched:

@@ -90,24 +90,26 @@ Não consulte serviço externo nem execute outra consulta só para completar ima
 """
 
 
-
 def build_instructions(schema: str, referencia: date) -> str:
-    return (f"Esquema real:\n{schema}\nData de referência: {referencia.isoformat()}.\n" + RULES
-              + "\nSe a pergunta pedir últimos N anos, use data_lancamento, com limite inferior "
-              "date(:referencia, '-' || :anos || ' years') e superior :referencia. "
-              "ano_lancamento serve apenas para anos civis explícitos. "
-              "Em análises por ano, exclua futuros com data_lancamento <= :referencia, salvo pedido explícito. "
-              "Se a pergunta pedir o maior/melhor filme, diretor ou par no singular, use LIMIT 1; não acrescente top 10. "
-              "Confira período e quantidade solicitados antes de executar. "
-              "Checklist obrigatório antes de consultar_sql: lucro acumulado filtra receita e orçamento não nulos; "
-              "médias retornam também a contagem válida; rankings desempatam por título/nome e depois chave. "
-              "Listas de filmes devem selecionar sk_movie_id, titulo, ano_lancamento e url_poster "
-              "quando esses campos existirem no esquema, mesmo que a pergunta peça somente a métrica. "
-              "Antes de executar o SQL, confira esses quatro campos no SELECT; não basta título e receita. "
-              "Esse checklist de filmes não se aplica a agregações por gênero, ano, pessoa ou produtora. "
-              "Na explicação em resposta, não liste chaves técnicas nem URLs de imagens; "
-              "esses metadados pertencem às evidências usadas pela interface. "
-              "Pares começam na CTE de direções AS MATERIALIZED e agrupam chaves antes dos nomes. "
-              "Antes de finalizar, confira que o resumo e seus rankings correspondem às evidências. "
-              f"Se a análise temporal incluir {referencia.year}, mesmo como coluna, escreva em avisos "
-              "que esse ano é parcial; mencionar a data apenas em resposta não substitui esse aviso.")
+    return (
+        f"Esquema real:\n{schema}\nData de referência: {referencia.isoformat()}.\n"
+        + RULES
+        + "\nSe a pergunta pedir últimos N anos, use data_lancamento, com limite inferior "
+        "date(:referencia, '-' || :anos || ' years') e superior :referencia. "
+        "ano_lancamento serve apenas para anos civis explícitos. "
+        "Em análises por ano, exclua futuros com data_lancamento <= :referencia, salvo pedido explícito. "
+        "Se a pergunta pedir o maior/melhor filme, diretor ou par no singular, use LIMIT 1; não acrescente top 10. "
+        "Confira período e quantidade solicitados antes de executar. "
+        "Checklist obrigatório antes de consultar_sql: lucro acumulado filtra receita e orçamento não nulos; "
+        "médias retornam também a contagem válida; rankings desempatam por título/nome e depois chave. "
+        "Listas de filmes devem selecionar sk_movie_id, titulo, ano_lancamento e url_poster "
+        "quando esses campos existirem no esquema, mesmo que a pergunta peça somente a métrica. "
+        "Antes de executar o SQL, confira esses quatro campos no SELECT; não basta título e receita. "
+        "Esse checklist de filmes não se aplica a agregações por gênero, ano, pessoa ou produtora. "
+        "Na explicação em resposta, não liste chaves técnicas nem URLs de imagens; "
+        "esses metadados pertencem às evidências usadas pela interface. "
+        "Pares começam na CTE de direções AS MATERIALIZED e agrupam chaves antes dos nomes. "
+        "Antes de finalizar, confira que o resumo e seus rankings correspondem às evidências. "
+        f"Se a análise temporal incluir {referencia.year}, mesmo como coluna, escreva em avisos "
+        "que esse ano é parcial; mencionar a data apenas em resposta não substitui esse aviso."
+    )

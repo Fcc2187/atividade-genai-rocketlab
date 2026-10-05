@@ -6,7 +6,10 @@ export function useElapsedTime(pending: boolean): number {
     setSeconds(0)
     if (!pending) return
     const started = performance.now()
-    const interval = setInterval(() => setSeconds(Math.floor((performance.now() - started) / 1000)), 1000)
+    const interval = setInterval(
+      () => setSeconds(Math.floor((performance.now() - started) / 1000)),
+      1000,
+    )
     return () => clearInterval(interval)
   }, [pending])
   return pending ? seconds : 0

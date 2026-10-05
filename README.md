@@ -2,7 +2,7 @@
 
 Aplicação local para consultar o catálogo CineData em português, com interface React e backend FastAPI. Usa Pydantic AI e **openai/gpt-oss-120b via Groq**, com SQLite somente leitura. Interface, API e banco ficam locais; a inferência exige internet e chave Groq. Perguntas são independentes, sem memória.
 
-**Estado em 04/10/2026:** 62 testes Python, 93 testes frontend e 25 gabaritos SQL locais aprovados. Na fonte `8c559f3`, os 25 casos reais passaram em status e dados, com revisão textual separada. A avaliação foi incremental: 23 acertos na bateria principal e dois casos aprovados em retestes manuais após HTTP413; histórico preservado. O fluxo integrado passou com dez pôsteres carregados, agregação, reformulação, CSV e histórico. As correções posteriores preservaram os 25 retornos em replay offline. Após a validação manual, o backend remove IDs técnicos da explicação e respeita o tempo de reposição informado pelo Groq entre chamadas. Não há retry automático. Com a nova chave, duas perguntas reais consecutivas passaram: nota IMDb em 34,688 s e bilheteria USD em 72,266 s, incluindo as esperas da cota. Rankings conferidos no SQLite, URLs de pôster preservadas e explicações sem IDs. Consulte o [resumo de validação](docs/VALIDACAO_FINAL.md) para fontes, resultados e limites.
+**Estado em 04/10/2026:** 65 testes Python, 96 testes frontend e 25 gabaritos SQL locais aprovados. Código formatado com Ruff e Prettier. HTTP413 tem código e orientação próprios; URLs de pôster permanecem na API e são omitidas do retorno SQL enviado ao modelo. Os 25 retornos capturados foram preservados em replay offline. A aprovação real dos 25 casos pertence à fonte histórica `8c559f3`, com retestes incrementais; não é uma nova bateria da versão atual. No reteste real desta alteração, 05 passou e 14 ainda recebeu HTTP413 (8.400 tokens solicitados, limite 8.000), agora classificado corretamente. Consulte o [resumo de validação](docs/VALIDACAO_FINAL.md) para resultados atuais, histórico e limites.
 
 ## Preparar o ambiente
 
@@ -12,10 +12,12 @@ Na raiz do projeto, com [uv](https://docs.astral.sh/uv/getting-started/installat
 uv venv --python 3.12.14 .venv
 uv pip install --python .venv\Scripts\python.exe --link-mode copy -r requirements.txt
 uv pip check --python .venv\Scripts\python.exe
-Copy-Item .env.example .env
+if (-not (Test-Path -LiteralPath .env)) {
+    Copy-Item -LiteralPath .env.example -Destination .env
+}
 ```
 
-Os comandos criam um ambiente novo; nesta máquina, Python e dependências já estão instalados. Não sobrescrever um `.env` já preenchido. As 34 dependências estão fixadas em [requirements.txt](requirements.txt). O SDK OpenAI instalado acessa o endpoint compatível do Groq, conforme a [documentação oficial](https://console.groq.com/docs/openai); não utiliza conta OpenAI ou assinatura Plus.
+Os comandos criam um ambiente novo; se ele já existir, reutilizá-lo e conferir as dependências. Executar a cópia de `.env.example` somente se `.env` não existir. As 34 dependências de execução estão fixadas em [requirements.txt](requirements.txt). O [guia complementar](docs/INSTALACAO_MODELO.md) inclui instalação nova em PowerShell e Linux/macOS. O SDK OpenAI instalado acessa o endpoint compatível do Groq, conforme a [documentação oficial](https://console.groq.com/docs/openai); não utiliza conta OpenAI ou assinatura Plus.
 
 Obter `cinerocket (1).db` nos materiais da atividade e colocá-lo na raiz. A base não acompanha o Git. Deve permanecer estática e intacta, sem limpeza, índices ou migrações. SHA-256 original: `410f5beef6ab9fb34b9044d5dd191f56f3f0dc30a56e6432386ecef0d977b012`.
 
@@ -54,7 +56,7 @@ Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8000/perguntas' -ContentTy
 
 `POST /perguntas` recebe uma pergunta com até 2000 caracteres. Retorna `status`, `resposta`, `avisos`, `consultas` (SQL, parâmetros, colunas, linhas e truncamento), `modelo` e `uso` (chamadas, tokens e tentativas SQL). Status: resultado, esclarecimento, recusa ou sem_dados. Referência temporal: data local do computador.
 
-Erros: 422 para entrada inválida; 503 para banco/configuração/Groq indisponível ou cota excedida; 502 para resposta inválida/limite operacional; 504 para prazo. `detail` contém código e mensagem, sem chave ou detalhes internos. `cota_excedida` identifica HTTP429 recebido do Groq; a aplicação não repete automaticamente. Encerrar com `Ctrl+C`.
+Erros: 413 para solicitação grande demais; 422 para entrada inválida; 503 para banco/configuração/Groq indisponível ou cota excedida; 502 para resposta inválida/limite operacional; 504 para prazo. `detail` contém código e mensagem, sem chave ou detalhes internos. `solicitacao_grande_demais` identifica HTTP413 recebido do Groq e orienta pedir menos resultados ou usar filtros; esperar não reduz o tamanho. `cota_excedida` identifica HTTP429. A aplicação não repete automaticamente. [Erros oficiais](https://console.groq.com/docs/errors). Encerrar com `Ctrl+C`.
 
 ## Interface web
 
@@ -90,6 +92,7 @@ Build e verificação, dentro de `frontend/`:
 npm.cmd run typecheck
 npm.cmd run lint
 npm.cmd run build
+npm.cmd run format:check
 npx.cmd playwright install chromium
 npm.cmd test
 # Ou todas as verificações após instalar o navegador:
@@ -116,7 +119,7 @@ Os temas compartilham componentes e tokens semânticos. A marca tem versões cla
 
 Até três chamadas de modelo e duas tentativas SQL por pergunta. Raciocínio `medium`, até 2048 tokens de geração por chamada, temperatura zero e ferramentas sequenciais. O limite de geração inclui raciocínio e passou nos cinco casos iniciais; a avaliação ampliada verifica casos maiores. Prazo total 600 segundos é um teto herdado da avaliação, não uma promessa de latência.
 
-Pergunta, esquema do banco e resultados da ferramenta são enviados ao Groq. O arquivo SQLite permanece local e as consultas rodam no computador. O cliente aceita somente o endpoint HTTPS oficial, sem proxies do ambiente, redirects, retries ou fallback.
+Pergunta, esquema do banco e resultados da ferramenta são enviados ao Groq. A coluna `url_poster` é omitida somente do retorno SQL enviado ao modelo; a API conserva as evidências completas, incluindo URLs, SQL e parâmetros. Títulos, anos, identificadores e métricas continuam disponíveis ao modelo. A URL ainda pode aparecer no esquema ou no texto SQL; a redução não garante que qualquer solicitação caiba no limite. O arquivo SQLite permanece local e as consultas rodam no computador. O cliente aceita somente o endpoint HTTPS oficial, sem proxies do ambiente, redirects, retries ou fallback.
 
 Na consulta de 01/10/2026, o plano gratuito publica 30 requisições/minuto, 1000/dia, 8000 tokens/minuto e 200000/dia para esse modelo. Limites são da organização e podem variar; verificar o painel da conta. Tokens, inclusive raciocínio, podem limitar o uso antes das requisições. Não tratar 1000 requisições como 500 perguntas garantidas. [Limites oficiais](https://console.groq.com/docs/rate-limits).
 
@@ -129,6 +132,15 @@ Autorização SQLite permite somente dez tabelas de negócio e funções analít
 Limites: 20 segundos por SQL, 100 linhas, 10000 caracteres de SQL, 50 parâmetros escalares finitos, 12000 caracteres de colunas/linhas e 2000 caracteres por célula de texto. Truncamento é sinalizado. SQL e parâmetros originais ficam preservados como evidência. Mapeamento de leitura até 1 GiB é configuração da conexão, sem alterar o banco. Não usar `immutable=1` com uma base em atualização.
 
 ## Testes e avaliação
+
+Formatação Python com Ruff 0.16.10 e frontend com Prettier 3.9.9, fixados na configuração e no lockfile. Na raiz:
+
+```powershell
+uvx --from ruff==0.16.10 ruff format app tests evaluation
+uvx --from ruff==0.16.10 ruff format --check app tests evaluation
+```
+
+Em `frontend/`, `npm.cmd run format` aplica a formatação; `npm.cmd run format:check` apenas verifica. O check faz parte de `npm.cmd run verify`. Essas ferramentas são de desenvolvimento e não alteram as dependências Python de execução.
 
 ```powershell
 # Testes sintéticos: não precisam de chave e não chamam a nuvem.

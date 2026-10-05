@@ -2,11 +2,50 @@
 
 Data: 04/10/2026. Referência dos 25 casos: 30/09/2026. Modelo: `openai/gpt-oss-120b`, via Groq.
 
-**Resultado final: 25 corretos, zero incorretos, zero erros e zero pendentes na última tentativa de cada caso.** A avaliação foi incremental, com a mesma versão, modelo, banco e referência temporal. A bateria principal teve 23 acertos e dois HTTP413; os casos 05 e 14 passaram em retestes manuais. Todas as tentativas continuam no histórico. As explicações foram revisadas separadamente, e o fluxo integrado foi repetido na versão atual, com filmes, pôsteres, agregação, reformulação, CSV e histórico.
+## Verificação atual
+
+| Verificação | Resultado nesta alteração | Fonte local |
+| --- | --- | --- |
+| Testes Python | **65 aprovados**; eram 62 antes das três regressões novas | `runtime/checks-413-python.log` |
+| Frontend | **96 aprovados**; eram 93; formatação, typecheck, lint e build com exit 0 | `runtime/checks-413-frontend.log` |
+| Formatação Python | 17 arquivos conforme Ruff 0.16.10; AST preservada pela formatação | `runtime/python-ast-before-format.json` |
+| Gabaritos SQL | 25 executados no banco original, sem truncamento | `runtime/references-413-formatting.json` |
+| Replay offline | 25 respostas, evidências, avisos e vereditos preservados; sem inferência Groq | `runtime/replay-413-formatting.json` |
+| Reteste real focado | 05 correto; 14 com HTTP413, agora classificado como solicitação grande demais | `runtime/groq-413-focused.json` |
+| Banco original | SHA-256 preservado: `410f5beef6ab9fb34b9044d5dd191f56f3f0dc30a56e6432386ecef0d977b012` | Conferência após os checks |
+
+As contagens de 44/55/62 testes Python, 93 testes frontend e 22 casos pertencem a etapas anteriores. Os 25 acertos reais descritos no histórico abaixo pertencem à fonte `8c559f3`; não são uma nova bateria completa da versão atual. Testes sintéticos, replay e inferência real têm alcances diferentes.
+
+## HTTP413 e tamanho enviado ao modelo
+
+O agente agora converte HTTP413 do Groq em `ProviderRequestTooLarge`. A API responde HTTP413 com `detail.codigo=solicitacao_grande_demais`; a interface orienta pedir menos resultados ou usar filtros mais específicos, preserva a pergunta e não reenvia automaticamente. HTTP429 continua como cota excedida; respostas inválidas continuam com HTTP502. A avaliação registra a exceção específica e o status original do provedor, conservando a falha no relatório. [Distinção oficial dos erros](https://console.groq.com/docs/errors).
+
+A coluna `url_poster` é omitida apenas do retorno SQL enviado ao LLM. A evidência guardada para a API permanece completa, com SQL, parâmetros, IDs, título, ano, métricas, URLs e truncamento. O modelo conserva as colunas analíticas e sua correspondência com as linhas. Essa projeção não altera o resultado SQLite nem o limite de leitura.
+
+Uma medição offline serializou solicitações pelo adaptador real usando as SQLs capturadas dos casos 05 e 14, com transporte HTTP simulado. Nenhuma chave ou cota real foi usada nessa medição:
+
+| Caso | Retorno SQL ao modelo, bytes UTF-8 | Segunda solicitação HTTP, bytes UTF-8 |
+| --- | --- | --- |
+| 05 — divergência das notas | 1.728 → 1.177 (−31,9%) | 18.434 → 17.865 (−3,1%) |
+| 14 — avaliações de usuários | 1.754 → 1.142 (−34,9%) | 18.528 → 17.896 (−3,4%) |
+
+A primeira solicitação ficou idêntica: 16.059/16.075 bytes. A segunda também contém instruções, esquema, definições das ferramentas e a chamada SQL anterior; reduzir o retorno de dados afeta apenas uma parte dela. As medidas são bytes, não tokens faturados ou a estimativa de admissão do Groq. SQLs e respostas geradas numa nova inferência podem variar. Fontes: `runtime/request-size-before.json`, `runtime/request-size-after.json` e `runtime/request-size-formatted.json`; as evidências da API permaneceram idênticas em todas.
+
+O reteste real usou a configuração de produção, sem pausa adicional nem retry: 05 passou em 36,516 s, com dez filmes, metadados e duas chamadas; 14 recebeu HTTP413 em 76,547 s, com **8.400 tokens solicitados para limite TPM de 8.000**. A redução dos pôsteres ajuda, mas não elimina todas as solicitações grandes demais. Esperar a reposição da cota não reduz uma solicitação que exceda esse teto. O erro foi mantido no novo relatório; o acerto histórico de 14 não foi reaproveitado como aprovação desta alteração.
+
+## Formatação e instalação
+
+Ruff 0.16.10 formatou `app/`, `tests/` e `evaluation/`; Prettier 3.9.9 formatou o código, testes e configurações do frontend. A estrutura AST dos 17 arquivos Python ficou idêntica antes/depois da formatação; as solicitações offline dos dois casos também ficaram iguais após formatar. Não houve refatoração ampla. `npm run verify` agora inclui `format:check`; os comandos Python usam a versão fixada em `pyproject.toml`, conforme o README. As dependências Python de execução passaram em `uv pip check`.
+
+O [guia complementar](INSTALACAO_MODELO.md) explica instalação nova em Windows e Linux/macOS, obtenção do banco, criação do ambiente e do `.env`, inicialização, diagnóstico e validação. Ele aponta para este quadro atual, evitando repetir contagens antigas como se fossem atuais.
+
+## Histórico: aprovação dos 25 casos em 8c559f3
+
+**Resultado daquela aprovação: 25 corretos, zero incorretos, zero erros e zero pendentes na última tentativa de cada caso.** A avaliação foi incremental, com a mesma versão, modelo, banco e referência temporal. A bateria principal teve 23 acertos e dois HTTP413; os casos 05 e 14 passaram em retestes manuais. Todas as tentativas continuam no histórico. As explicações foram revisadas separadamente, e o fluxo integrado foi repetido naquela versão, com filmes, pôsteres, agregação, reformulação, CSV e histórico.
 
 Na fonte dessa aprovação, a pausa diagnóstica existia somente no executor local de avaliação. O backend passou posteriormente a respeitar os headers de reposição da cota; veja a validação manual abaixo. O resultado comprova os cenários executados; não garante disponibilidade geral do provedor ou correção de qualquer pergunta futura.
 
-## Ajustes após a validação manual
+## Histórico: ajustes após a validação manual
 
 O usuário encontrou IDs de filmes no texto da resposta e HTTP429 ao enviar perguntas consecutivas. O prompt já proibia esses IDs na explicação, mas a saída do modelo não era higienizada. Agora o backend remove chaves presentes nas evidências da narrativa, incluindo hashes de 64 caracteres com ou sem rótulo; chaves curtas só são removidas com rótulo explícito. IDs, SQL, parâmetros, métricas e URLs de pôster permanecem nas evidências.
 
@@ -34,7 +73,7 @@ As quatro chamadas ao Groq retornaram HTTP200; não houve HTTP429 ou timeout. O 
 | app/agent.py | 735d4ff76fcab5a9a9f63bb30899a31e168c0583fe8e660d1cc66bb9f1ad1ec6 |
 | app/groq_quota.py | 14aac9deed006aa6655507ed47cf6a740147af1e2a4e032abb52b16bddfbdeb6 |
 
-## Versão e rastreabilidade
+## Histórico: versão e rastreabilidade
 
 Fonte da inferência e integração reais: `8c559f3`. Fonte entregue após a correção de avisos: `8d86941`. Os resultados de `d152201` e de prompts anteriores são históricos e não compõem os 25 acertos.
 
@@ -52,7 +91,7 @@ Banco local, estático e somente leitura; nenhuma migração, índice ou limpeza
 
 Fontes locais desta aprovação: `groq-final-aceite-v4-30.json`, `groq-final-aceite-reteste-05-14-30.json` e `groq-final-trace-v4-05.json`. O consolidado `groq-final-consolidado-v4.json` usa a última tentativa cronológica por caso, preserva as falhas anteriores e confere hashes, modelo, data, IDs únicos e gabaritos. O grade foi recalculado contra as referências atuais, com as tolerâncias originais. A revalidação posterior está separada em `replay-final-warning-fix.json`, com os hashes anterior/atual e os 25 resultados preservados. Relatórios brutos, logs, capturas e ferramentas diagnósticas ficam fora do Git.
 
-## Correções e revisão manual
+## Histórico: correções e revisão manual
 
 - **Cobertura do catálogo (19):** o prompt distingue catálogo completo de consultas com recorte temporal. O novo SQL não acrescenta a exclusão de lançamentos futuros; médias e contagens correspondem ao gabarito original.
 - **Aliases (11, 14 e 25):** o avaliador aceita `produtora`, `diferenca` e `qtd_avaliacoes` como equivalentes aos nomes canônicos. IDs, métricas, valores e ordem continuam conferidos; testes negativos rejeitam dados incorretos e truncamento. Nenhum gabarito foi alterado.
@@ -64,16 +103,9 @@ Os textos dos 25 casos foram conferidos contra suas evidências: moedas, notas, 
 
 O grade automático avalia status e linhas, não certifica explicações. Alguns SQLs ainda agrupam gêneros somente pelo nome ou omitem desempates de agregações sem empate no banco original; os dados observados coincidem com os gabaritos. Isso não comprova aderência universal em outros bancos. A seleção de metadados de filmes é orientada pelo prompt, sem enriquecimento determinístico para toda pergunta futura.
 
-## Verificação local
+## Histórico: verificação local e visual
 
-| Comando / inspeção | Resultado |
-| --- | --- |
-| `.\.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests -v` | 55 testes aprovados na fonte entregue |
-| `npm.cmd run verify` em frontend/ | 93 testes aprovados; typecheck, lint e build exit 0 |
-| `.\.venv\Scripts\python.exe -X utf8 -m evaluation.run --references-only` | 25 gabaritos SQL executados no original, sem inferência ou truncamento |
-| Consolidação e regrade offline | 25 IDs únicos; hashes/modelo/data iguais; gabaritos atuais; histórico HTTP413 preservado |
-| Replay posterior à correção de avisos | 25 SQLs/respostas reexecutadas no agente atual; evidências e avisos idênticos; sem chamadas Groq |
-| Fluxo integrado atual | Filmes, agregação, esclarecimento/reformulação, CSV e histórico aprovados |
+Na fonte entregue após a correção de avisos, passaram 55 testes Python e 93 testes frontend, além de typecheck, lint e build. Os 25 gabaritos SQL, a consolidação/regrade offline, o replay e o fluxo integrado foram verificados conforme as fontes históricas acima. As contagens atuais estão no quadro inicial.
 
 Os testes frontend usam fixtures sintéticas. Não comprovam SQL criado pelo modelo; essa evidência vem dos casos e fluxos reais. Fixtures analíticas com seis candidatos verificam top 5, filtros de margem, mínimo de notas válidas, desempates e distinção entre popularidade e avaliações.
 
@@ -87,9 +119,9 @@ O executor diagnóstico envolve `model.request` sem alterar argumentos, ferramen
 
 Nas tentativas históricas, houve HTTP429 por TPM e TPD, inclusive com chaves recém-configuradas. Uma instrumentação local confirmou rejeição na segunda chamada de uma pergunta. A chave não foi publicada. Dez segundos de pausa foram insuficientes; o usuário autorizou o diagnóstico, posteriormente ampliado para 30 segundos. As fontes anteriores terminaram em 21/25 automáticos, com três equivalências de formato/alias e um erro real de cobertura, além de uma falha narrativa. As correções foram seguidas de uma nova bateria completa, sem reaproveitar acertos da fonte antiga.
 
-Na fonte atual, uma tentativa anterior à última troca de chave parou por HTTP429 diário no primeiro caso. Após a troca, a bateria v4 concluiu 25 tentativas: 23 corretos e HTTP413 nos casos 05 e 14. O reteste focado passou em 14, mas 05 voltou a receber HTTP413 (solicitação de 10.522 tokens, limite TPM de 8.000). O reteste instrumentado seguinte de 05 passou com duas chamadas, 3.839 e 5.260 tokens de entrada reportados, metadados completos e dez linhas corretas. Todos esses erros e retestes ficam registrados; não houve conversão silenciosa de falhas em sucesso.
+Na fonte 8c559f3, uma tentativa anterior à última troca de chave parou por HTTP429 diário no primeiro caso. Após a troca, a bateria v4 concluiu 25 tentativas: 23 corretos e HTTP413 nos casos 05 e 14. O reteste focado passou em 14, mas 05 voltou a receber HTTP413 (solicitação de 10.522 tokens, limite TPM de 8.000). O reteste instrumentado seguinte de 05 passou com duas chamadas, 3.839 e 5.260 tokens de entrada reportados, metadados completos e dez linhas corretas. Todos esses erros e retestes ficam registrados; não houve conversão silenciosa de falhas em sucesso.
 
-## Fluxo integrado real na fonte atual
+## Histórico: fluxo integrado real em 8c559f3
 
 Frontend compilado → handlers originais de `app.main` → Groq → SQLite original, com pausa somente no modelo da instância temporária de avaliação. Não usou fixtures ou replays. Perguntas HTTP usam 04/10/2026; casos CLI usam 30/09/2026. Rankings e agregação conferidos independentemente no SQLite.
 
@@ -110,7 +142,7 @@ Uma cópia limpa de `8ccb8fa`, anterior às últimas correções do agente/promp
 
 Demo: pergunta de filmes → resposta e lista/tabela → valores originais e SQL → CSV → reabertura do histórico. Reformulação inclui todo o contexto necessário. README documenta instalação, chave local, banco, servidores e checks. [Repositório da entrega](https://github.com/Fcc2187/atividade-genai-rocketlab); não há deploy público. Credenciais, banco e artefatos locais ficam fora do Git.
 
-## Resultado por caso
+## Histórico: resultado por caso
 
 Última tentativa de cada caso, fonte `8c559f3`: **25 corretos, 0 incorretos, 0 erros e 0 pendentes**. Avaliação incremental, com revisão textual separada e histórico de falhas preservado.
 
