@@ -2,8 +2,6 @@
 
 Aplicação local para consultar o catálogo CineData em português, com interface React e backend FastAPI. Usa Pydantic AI e **openai/gpt-oss-120b via Groq**, com SQLite somente leitura. Interface, API e banco ficam locais; a inferência exige internet e chave Groq. Perguntas são independentes, sem memória.
 
-**Estado em 04/10/2026:** 66 testes Python, 96 testes frontend e 25 gabaritos SQL locais aprovados. O excesso de contexto do caso `14_usuarios_imdb` foi corrigido: regras centralizadas, raciocínio intermediário não reenviado e `LIMIT 10` explícito para o ranking padrão. O reteste real da pergunta original passou com dez filmes, duas chamadas HTTP200 e evidências completas, incluindo URLs de pôster. A segunda solicitação caiu de 26.321 para 16.305 bytes (−38,1%). HTTP413 mantém código e orientação próprios. A aprovação real dos 25 casos pertence à fonte histórica `8c559f3`; não é uma nova bateria completa da versão atual. Consulte o [resumo de validação](docs/VALIDACAO_FINAL.md) para fontes, histórico e limites.
-
 ## Vídeo instrutivo
 
 Conheça o **CineData Analytics em ação** e acompanhe o uso da aplicação em uma demonstração guiada. O vídeo complementa a documentação com uma apresentação prática da experiência de consulta.
