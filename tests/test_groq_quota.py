@@ -208,6 +208,44 @@ class GroqQuotaTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await client.close()
 
+    async def test_raciocinio_nao_e_reenviado_mas_sql_e_evidencias_sao_preservados(
+        self,
+    ):
+        marker = "raciocinio_intermediario_desnecessario"
+
+        def handler(request):
+            response = self.success(request, {"x-ratelimit-reset-tokens": "0s"})
+            if len(self.sent_at) == 1:
+                body = response.json()
+                body["choices"][0]["message"]["reasoning"] = (marker + " ") * 100
+                return httpx.Response(200, headers=response.headers, json=body)
+            body = json.loads(request.content)
+            self.assertNotIn(marker, request.content.decode())
+            assistant = next(m for m in body["messages"] if m["role"] == "assistant")
+            self.assertNotIn("reasoning", assistant)
+            self.assertEqual(
+                assistant["tool_calls"][0]["function"]["name"], "consultar_sql"
+            )
+            self.assertEqual(body["reasoning_effort"], "medium")
+            self.assertEqual(body["max_completion_tokens"], 2048)
+            return response
+
+        model, client = self.make_model(handler)
+        try:
+            result = await agent.responder(
+                "Quantos filmes?", self.path, date(2026, 9, 30), model
+            )
+            self.assertEqual(
+                result.consultas[0].sql, "SELECT COUNT(*) AS filmes FROM dim_movies"
+            )
+            self.assertEqual(result.consultas[0].parametros, {})
+            self.assertEqual(result.consultas[0].colunas, ["filmes"])
+            self.assertEqual(result.consultas[0].linhas, [[2]])
+            self.assertFalse(result.consultas[0].truncado)
+            self.assertEqual(result.uso["chamadas"], 2)
+        finally:
+            await client.close()
+
     async def test_cancelar_durante_espera_libera_trava_sem_enviar_request(self):
         model, client = self.make_model(
             lambda request: self.success(

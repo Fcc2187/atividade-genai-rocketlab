@@ -1,4 +1,4 @@
-"""Instruções analíticas e montagem do prompt; texto preservado da avaliação."""
+"""Regras analíticas centralizadas, sem repetições nas ferramentas ou no builder."""
 
 from datetime import date
 
@@ -22,20 +22,24 @@ Regras analíticas:
 4 NULL é ausente; não substitua por zero. Zero informado é válido.
 5 Lucro médio por gênero com receita informada: AVG(lucro_usd), receita IS NOT NULL;
   orçamento ausente não exclui nesse exemplo, mas avise a limitação do lucro armazenado.
-6 Outras análises de lucro, inclusive SUM(lucro_usd/lucro_brl) armazenado, exigem
-  receita IS NOT NULL e orçamento IS NOT NULL, salvo pedido claro para incluir filmes sem esses dados.
-  Pedir lucro acumulado, por si só, não dispensa esses filtros. Declare filtros.
+6 Outras análises de lucro, inclusive SUM(lucro_usd) armazenado, exigem
+  receita_usd IS NOT NULL AND orcamento_usd IS NOT NULL; em BRL, os campos correspondentes.
+  Só dispense esses filtros se pedirem incluir filmes sem esses dados; declare os filtros.
+  Pedir lucro acumulado, por si só, não dispensa os dados: lucro acumulado filtra receita e orçamento não nulos.
 7 Margem = 100.0*(receita-orçamento)/receita; receita>0 e orçamento não nulo. Não é ROI.
 8 Margem média por grupo = AVG(margem de cada filme), não razão entre somas.
 9 Média de notas simples, só notas não nulas; média ponderada apenas quando solicitada. Zero é válido.
 10 Divergência de notas = ABS(nota1-nota2), ambas não nulas, escala 0–10.
 11 Avaliações de usuários: agregado dim_reviews; movie_reviews guarda avaliações individuais.
-12 Últimos cinco anos: data_lancamento BETWEEN date(:referencia,'-5 years') AND :referencia, inclusive; excluir futuros.
+12 Últimos N anos: data_lancamento BETWEEN date(:referencia, '-' || :anos || ' years') AND :referencia,
+  inclusive; excluir futuros. Para cinco anos, :anos=5.
   data_lancamento é DATE (texto ISO YYYY-MM-DD); ano_lancamento é INTEGER (ex.: 2026).
   Jamais compare ano_lancamento a datas ISO: isso retorna vazio incorretamente no SQLite.
   Para período com dia/mês use data_lancamento; para ano civil use ano_lancamento com números.
 13 Melhor diretor por média: IMDb padrão, pelo menos cinco filmes com nota válida; informe amostra.
-14 Empates: métrica DESC, título/nome ASC, chave ASC. Singular retorna 1; ranking sem tamanho retorna top 10 e avise.
+14 Rankings: ORDER BY métrica DESC, título/nome ASC, chave ASC; LIMIT com a quantidade pedida.
+  Sem tamanho explícito, use LIMIT 10 e avise que é top 10. Singular (filme, diretor ou par): LIMIT 1.
+  Aplique ORDER BY e LIMIT no SQL, antes de enviar as linhas ao modelo; não consulte todo o ranking para resumir depois.
 15 Pontes muitos-para-muitos: contar filmes distintos por chave; evitar multiplicar valores em joins.
   Cada filme pode contribuir para vários gêneros/produtoras; não repartir valores sem pedido.
   Pares ator/diretor têm papéis diferentes: nunca filtre pela ordem das chaves (ator_id < diretor_id).
@@ -65,7 +69,10 @@ Regras analíticas:
   em pedidos explícitos de futuros, use datas posteriores à referência.
   Sem período ou restrição de lançamento na pergunta, considere todo o catálogo, inclusive na cobertura
   de notas por gênero: não acrescente filtro de data. Isso difere de analisar filmes já lançados.
-  Se incluir o ano atual em uma análise temporal, declare em avisos que é parcial.
+  Médias anuais normalmente usam WHERE m.ano_lancamento IS NOT NULL AND m.data_lancamento<=:referencia
+  AND f.nota_imdb IS NOT NULL; GROUP BY m.ano_lancamento (INTEGER), AVG e COUNT; adapte a fonte pedida.
+  Se incluir o ano da referência em uma análise temporal, mesmo como coluna, declare em avisos que é parcial;
+  mencionar a data apenas em resposta não substitui esse aviso.
 Ferramenta retorna até 100 linhas e pode truncar; avise se isso ocorrer, sem totalizar a parcela truncada.
 Papéis exatos em dim_people: Ator, Diretor, Roteirista.
 Gêneros incluem Action, Adventure, Animation, Comedy, Crime, Documentary, Drama, Family, Fantasy,
@@ -74,9 +81,10 @@ Para contagens de elenco, comece nos filmes elegíveis, depois CROSS JOIN bridge
 e CROSS JOIN dim_people, com ON pelas chaves e filtro de papel. A ponte tem chave (filme,pessoa).
 SQLite reordena JOIN comum mesmo após filtrar numa CTE; iniciar por pessoas pode exceder o prazo.
 Apresentação de resultados:
-Quando cada linha representar um filme individual, selecione sua chave como sk_movie_id e título como titulo,
-além das métricas solicitadas. Se existirem no esquema real, inclua ano_lancamento e url_poster
-com esses aliases exatos. Nunca invente coluna ou URL; esquemas sem esses campos continuam válidos.
+Em toda lista de filmes individuais, o SELECT deve conter obrigatoriamente sk_movie_id, titulo,
+ano_lancamento e url_poster, além das métricas, mesmo se a pergunta pedir só a métrica.
+Confira esses quatro campos antes de executar; use esses aliases exatos e somente campos existentes
+no esquema real. Nunca invente coluna ou URL; esquemas sem esses campos continuam válidos.
 Metadados de filme não devem entrar em agregações por gênero, ano, pessoa ou produtora.
 Não filtre por url_poster não nulo: a ausência de imagem não exclui filmes elegíveis.
 Busque metadados pela chave do filme sem acrescentar JOIN que multiplique linhas ou métricas.
@@ -86,30 +94,11 @@ para contagem de reviews use qtd_avaliacoes_usuarios.
 Na explicação, arredonde valores corretamente, sem truncar dígitos, mantendo as evidências sem ROUND.
 Se resumir os N maiores ou menores valores de uma tabela, confira a ordenação e inclua exatamente
 os N registros correspondentes; não escolha exemplos e os descreva como os N extremos.
+Na explicação em resposta, não liste chaves técnicas nem URLs de imagens; elas pertencem às evidências da interface.
 Não consulte serviço externo nem execute outra consulta só para completar imagens.
+Confira período, quantidade, metadados e filtros antes de consultar_sql; antes de finalizar, confira o resumo com as evidências.
 """
 
 
 def build_instructions(schema: str, referencia: date) -> str:
-    return (
-        f"Esquema real:\n{schema}\nData de referência: {referencia.isoformat()}.\n"
-        + RULES
-        + "\nSe a pergunta pedir últimos N anos, use data_lancamento, com limite inferior "
-        "date(:referencia, '-' || :anos || ' years') e superior :referencia. "
-        "ano_lancamento serve apenas para anos civis explícitos. "
-        "Em análises por ano, exclua futuros com data_lancamento <= :referencia, salvo pedido explícito. "
-        "Se a pergunta pedir o maior/melhor filme, diretor ou par no singular, use LIMIT 1; não acrescente top 10. "
-        "Confira período e quantidade solicitados antes de executar. "
-        "Checklist obrigatório antes de consultar_sql: lucro acumulado filtra receita e orçamento não nulos; "
-        "médias retornam também a contagem válida; rankings desempatam por título/nome e depois chave. "
-        "Listas de filmes devem selecionar sk_movie_id, titulo, ano_lancamento e url_poster "
-        "quando esses campos existirem no esquema, mesmo que a pergunta peça somente a métrica. "
-        "Antes de executar o SQL, confira esses quatro campos no SELECT; não basta título e receita. "
-        "Esse checklist de filmes não se aplica a agregações por gênero, ano, pessoa ou produtora. "
-        "Na explicação em resposta, não liste chaves técnicas nem URLs de imagens; "
-        "esses metadados pertencem às evidências usadas pela interface. "
-        "Pares começam na CTE de direções AS MATERIALIZED e agrupam chaves antes dos nomes. "
-        "Antes de finalizar, confira que o resumo e seus rankings correspondem às evidências. "
-        f"Se a análise temporal incluir {referencia.year}, mesmo como coluna, escreva em avisos "
-        "que esse ano é parcial; mencionar a data apenas em resposta não substitui esse aviso."
-    )
+    return f"Esquema real:\n{schema}\nData de referência: {referencia.isoformat()}.\n{RULES}"

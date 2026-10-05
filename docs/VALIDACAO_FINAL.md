@@ -6,17 +6,47 @@ Data: 04/10/2026. Referência dos 25 casos: 30/09/2026. Modelo: `openai/gpt-oss-
 
 | Verificação | Resultado nesta alteração | Fonte local |
 | --- | --- | --- |
-| Testes Python | **65 aprovados**; eram 62 antes das três regressões novas | `runtime/checks-413-python.log` |
-| Frontend | **96 aprovados**; eram 93; formatação, typecheck, lint e build com exit 0 | `runtime/checks-413-frontend.log` |
-| Formatação Python | 17 arquivos conforme Ruff 0.16.10; AST preservada pela formatação | `runtime/python-ast-before-format.json` |
-| Gabaritos SQL | 25 executados no banco original, sem truncamento | `runtime/references-413-formatting.json` |
-| Replay offline | 25 respostas, evidências, avisos e vereditos preservados; sem inferência Groq | `runtime/replay-413-formatting.json` |
-| Reteste real focado | 05 correto; 14 com HTTP413, agora classificado como solicitação grande demais | `runtime/groq-413-focused.json` |
+| Testes Python | **66 aprovados**; regressão nova verifica ausência de reenvio do raciocínio sem perder SQL/evidências | `runtime/checks-case14-context-python-final.log` |
+| Frontend | **96 aprovados**; formatação, typecheck, lint e build com exit 0 | `runtime/checks-case14-context-frontend.log` |
+| Formatação Python | 17 arquivos conforme Ruff 0.16.10 | `ruff format --check app tests evaluation` |
+| Gabaritos SQL | 25 executados no banco original, sem truncamento | `runtime/references-case14-context.json` |
+| Reteste real de 14 | Correto; dez filmes, duas chamadas HTTP200, metadados e pôsteres conferidos no SQLite | `runtime/groq-case14-context-final.json` e `runtime/groq-case14-context-final-verified.json` |
 | Banco original | SHA-256 preservado: `410f5beef6ab9fb34b9044d5dd191f56f3f0dc30a56e6432386ecef0d977b012` | Conferência após os checks |
 
-As contagens de 44/55/62 testes Python, 93 testes frontend e 22 casos pertencem a etapas anteriores. Os 25 acertos reais descritos no histórico abaixo pertencem à fonte `8c559f3`; não são uma nova bateria completa da versão atual. Testes sintéticos, replay e inferência real têm alcances diferentes.
+As contagens de 44/55/62/65 testes Python, 93 testes frontend e 22 casos pertencem a etapas anteriores. Os 25 acertos reais e os replays anteriores pertencem às fontes históricas abaixo; não são uma nova bateria completa da versão atual. Testes sintéticos, replay e inferência real têm alcances diferentes.
 
-## HTTP413 e tamanho enviado ao modelo
+## Correção do contexto de 14_usuarios_imdb
+
+A pergunta original permanece **“Quais filmes têm maior diferença entre nota média de usuários e nota IMDb?”**, referência 30/09/2026. `evaluation/cases.json` permanece idêntico: top 10, agregado `dim_reviews`, diferença absoluta, notas não nulas, desempate por título/chave, mesmos gabarito, tolerâncias e avaliador. Não foi inserida uma pergunta simplificada, removido um caso nem reduzido o ranking.
+
+A reprodução real instrumentada na fonte `72675c7` revelou o excesso na segunda chamada: SQL sem `LIMIT 10`, 71 linhas truncadas e reenvio do raciocínio intermediário pelo adaptador. O provedor recebeu 26.321 bytes e rejeitou a chamada com HTTP413: estimativa de 8.583 tokens para limite 8.000. Além dos dados, as mesmas instruções apareciam no prompt principal, no checklist final e na descrição da ferramenta SQL. Essa falha permanece em `runtime/groq-case14-context-before.json` e seu trace.
+
+As regras analíticas foram centralizadas no prompt; o checklist repetido e as cópias nas descrições da ferramenta/saída foram removidos, preservando seus requisitos. A regra de ranking agora manda aplicar `ORDER BY` e o tamanho esperado no SQL: sem tamanho informado, `LIMIT 10`; pedidos singulares continuam com `LIMIT 1`. A instrução única de listas exige os quatro metadados disponíveis, incluindo `url_poster`. Esquema real, proteção SQL, limites, modelo, esforço `medium` e geração de 2.048 tokens permanecem iguais.
+
+O perfil do adaptador usa `openai_chat_send_back_thinking_parts=False`: a próxima chamada conserva pergunta, regras, chamada SQL e resultado; não recebe novamente o raciocínio intermediário. Isso não desliga a geração de raciocínio. A API conserva a evidência original, e somente `url_poster` continua omitido do retorno SQL ao modelo. O comportamento do perfil foi conferido no SDK instalado e na [documentação do Pydantic AI](https://pydantic.dev/docs/ai/api/pydantic-ai/profiles/).
+
+| Medida capturada nas chamadas reais | Reprodução anterior | Reteste final |
+| --- | --- | --- |
+| Primeira solicitação HTTP | 16.075 bytes | 14.425 bytes |
+| Definições das ferramentas | 2.223 bytes | 1.102 bytes |
+| Segunda solicitação HTTP | 26.321 bytes | 16.305 bytes (−38,1%) |
+| Linhas enviadas após SQL | 71, truncadas | 10, sem truncamento |
+| Raciocínio anterior reenviado | Sim | Não |
+| Resultado da segunda chamada | HTTP413 | HTTP200; 4.168 tokens de entrada reportados |
+
+O reteste final da pergunta original passou em **35,781 s**, incluindo espera da cota, com duas chamadas HTTP200 e uma tentativa SQL. Os dez IDs, títulos, anos, valores, ordem e URLs coincidiram com SQL independente no banco original. Há nove URLs preenchidas e uma nula para **Milla: The Movie**; esse filme foi mantido. A explicação lista os dez filmes e as diferenças corretas; os avisos declaram notas não nulas, diferença absoluta e recorte top 10. SQL, parâmetros, valores e metadados retornados foram reexecutados e conferidos integralmente; nenhum dado da API foi descartado para reduzir o contexto.
+
+Um primeiro reteste após a deduplicação passou em status/dados, mas omitiu `url_poster` no SELECT. Essa observação está preservada em `runtime/groq-case14-context-after.json`; a instrução de metadados foi esclarecida antes do reteste final. A aprovação atual exige a conferência adicional de metadados, registrada em `runtime/groq-case14-context-final-verified.json`. Nenhum HTTP413 foi convertido em acerto, e não se consolida uma bateria de 25 inferências com prompts de versões diferentes.
+
+| Fonte do reteste final | SHA-256 |
+| --- | --- |
+| app/agent.py | `014ef191f1dc76e04cb75cccd4e966c1282ebbfe2e6f7eb9d54fc6fe53573040` |
+| app/prompts.py | `7eb88769bdca0f5e955990091e78f7514108e14fbfda7126f33b0e98063c0583` |
+| evaluation/grading.py, sem alteração nesta correção | `34371d39ffc0ddf527c8c442b21373b70ab6b559e76c8042232213936dd2677b` |
+
+Os traces locais capturam o corpo HTTP sem headers/credenciais e não alteram os argumentos enviados. Bytes serializados, tokens de entrada reportados e estimativas de admissão do provedor são medidas distintas. Esse reteste comprova o caso executado, não disponibilidade futura nem correção universal. Os demais 24 casos reais não foram reexecutados com esse prompt; os 25 gabaritos locais foram.
+
+## Histórico: HTTP413 e tamanho enviado ao modelo em 72675c7
 
 O agente agora converte HTTP413 do Groq em `ProviderRequestTooLarge`. A API responde HTTP413 com `detail.codigo=solicitacao_grande_demais`; a interface orienta pedir menos resultados ou usar filtros mais específicos, preserva a pergunta e não reenvia automaticamente. HTTP429 continua como cota excedida; respostas inválidas continuam com HTTP502. A avaliação registra a exceção específica e o status original do provedor, conservando a falha no relatório. [Distinção oficial dos erros](https://console.groq.com/docs/errors).
 
@@ -33,7 +63,7 @@ A primeira solicitação ficou idêntica: 16.059/16.075 bytes. A segunda também
 
 O reteste real usou a configuração de produção, sem pausa adicional nem retry: 05 passou em 36,516 s, com dez filmes, metadados e duas chamadas; 14 recebeu HTTP413 em 76,547 s, com **8.400 tokens solicitados para limite TPM de 8.000**. A redução dos pôsteres ajuda, mas não elimina todas as solicitações grandes demais. Esperar a reposição da cota não reduz uma solicitação que exceda esse teto. O erro foi mantido no novo relatório; o acerto histórico de 14 não foi reaproveitado como aprovação desta alteração.
 
-## Formatação e instalação
+## Histórico: formatação e instalação em 72675c7
 
 Ruff 0.16.10 formatou `app/`, `tests/` e `evaluation/`; Prettier 3.9.9 formatou o código, testes e configurações do frontend. A estrutura AST dos 17 arquivos Python ficou idêntica antes/depois da formatação; as solicitações offline dos dois casos também ficaram iguais após formatar. Não houve refatoração ampla. `npm run verify` agora inclui `format:check`; os comandos Python usam a versão fixada em `pyproject.toml`, conforme o README. As dependências Python de execução passaram em `uv pip check`.
 

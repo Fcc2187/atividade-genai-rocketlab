@@ -65,9 +65,11 @@ class GroqAdapterTests(unittest.IsolatedAsyncioTestCase):
                 sql_tool = next(
                     t for t in body["tools"] if t["function"]["name"] == "consultar_sql"
                 )
-                self.assertIn(
-                    "receita_usd IS NOT NULL", sql_tool["function"]["description"]
+                self.assertEqual(
+                    sql_tool["function"]["parameters"]["required"],
+                    ["sql", "parametros"],
                 )
+                self.assertIn("receita_usd IS NOT NULL", policies)
             if len(requests) == 1:
                 message = {
                     "role": "assistant",
